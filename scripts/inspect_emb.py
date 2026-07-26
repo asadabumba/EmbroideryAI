@@ -3,7 +3,7 @@ import olefile
 
 
 file_path = Path(
-    r"/dataset/samples/Ghost\Hatch_Halloween-Quilt - Ghost.EMB"
+    r"/dataset/processed/Ghost\Hatch_Halloween-Quilt - Ghost.EMB"
 )
 
 ole = olefile.OleFileIO(file_path)

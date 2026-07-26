@@ -3,7 +3,7 @@ from src.emb_reader import EmbReader
 
 
 emb_path = Path(
-    r"C:\Users\SA88\EmbroideryAI\dataset\samples\Ghost\Hatch_Halloween-Quilt - Ghost.EMB"
+    r"/dataset/raw/Ghost\Hatch_Halloween-Quilt - Ghost.EMB"
 )
 
 
