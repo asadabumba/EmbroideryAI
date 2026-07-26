@@ -1,17 +1,37 @@
-.idea/
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 
+# Virtual environment
+.venv/
+venv/
+
+# Archive
 archive/
 
+# IDE
+.idea/
+.vscode/
+
+# Logs
+logs/
+*.log
+
+# Dataset (не грузим исходники)
 dataset/raw/
 dataset/processed/
 
-*.jpg
-*.bmp
+# Большие файлы
 *.EMB
-*.DST
-*.PES
-*.EXP
-*.EOF
+*.emb
+*.bmp
+*.jpg
+*.png
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
