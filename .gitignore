@@ -4,6 +4,10 @@ archive/
 
 __pycache__/
 *.pyc
+*.jpg
+*.bmp
+*.raw
+*.bin
 
 .venv/
 venv/

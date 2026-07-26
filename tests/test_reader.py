@@ -23,10 +23,16 @@ print("\n=== METADATA ===")
 print(reader.get_metadata())
 
 
-print("\n=== EXTRACT PREVIEW ===")
+print("\n=== EXPORT ALL ===")
 
-reader.extract_preview(
-    "preview.jpg"
+files = reader.export_all(
+    "export_test"
 )
+
+print("Созданные файлы:")
+
+for name, path in files.items():
+    print(name, "->", path)
+
 
 print("Готово!")
