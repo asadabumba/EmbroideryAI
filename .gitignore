@@ -1,6 +1,7 @@
 .idea/
 .venv/
 __pycache__/
+archive/
 *.pyc
 
 dataset/raw/
