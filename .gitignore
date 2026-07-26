@@ -1,11 +1,17 @@
 .idea/
 .venv/
 __pycache__/
-archive/
 *.pyc
+
+archive/
 
 dataset/raw/
 dataset/processed/
 
 *.jpg
 *.bmp
+*.EMB
+*.DST
+*.PES
+*.EXP
+*.EOF
