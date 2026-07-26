@@ -7,9 +7,6 @@ __pycache__/
 .venv/
 venv/
 
-# Archive
-archive/
-
 # IDE
 .idea/
 .vscode/
@@ -35,3 +32,6 @@ dataset/processed/
 # OS
 .DS_Store
 Thumbs.db
+
+# Archive
+archive/
