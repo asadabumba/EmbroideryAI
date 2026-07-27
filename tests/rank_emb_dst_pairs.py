@@ -325,58 +325,26 @@ def wilcom_to_dst_units(
     return float(value) / 18.0
 
 
-def select_best_stitch_comparison(
+def compare_stitch_count(
     ddd_stitch_count: int | None,
     dst_header_count: int | None,
-    dst_command_count: int,
-    dst_stitch_count: int
 ) -> dict[str, Any]:
     """
-    DDD и DST могут по-разному учитывать:
+    Строго сравнивает количество стежков DDD
+    только со значением ST из заголовка DST.
 
-    - jump;
-    - color change;
-    - end;
-    - нулевые команды.
-
-    Поэтому сравниваем DDD сразу с несколькими
-    значениями DST и выбираем ближайшее.
+    Другие варианты не подбираются.
     """
 
-    candidates = {
-        "header_ST": dst_header_count,
-        "all_commands": dst_command_count,
-        "stitch_commands": dst_stitch_count,
-    }
-
-    best_name = None
-    best_value = None
-    best_error = None
-
-    for candidate_name, candidate_value in (
-        candidates.items()
-    ):
-
-        error = relative_error(
-            ddd_stitch_count,
-            candidate_value
-        )
-
-        if error is None:
-            continue
-
-        if (
-            best_error is None
-            or error < best_error
-        ):
-            best_name = candidate_name
-            best_value = candidate_value
-            best_error = error
+    error = relative_error(
+        ddd_stitch_count,
+        dst_header_count,
+    )
 
     return {
-        "comparison": best_name,
-        "dst_value": best_value,
-        "relative_error": best_error,
+        "comparison": "header_ST",
+        "dst_value": dst_header_count,
+        "relative_error": error,
     }
 
 
@@ -534,19 +502,23 @@ def evaluate_end_position(
     }
 
 
-def calculate_score(
+def calculate_match_metrics(
     stitch_similarity: float | None,
     width_similarity: float | None,
     height_similarity: float | None,
     color_similarity: float | None,
-    end_similarity: float | None
-) -> float:
+) -> dict[str, float]:
     """
-    Итоговый рейтинг пары.
+    Возвращает три оценки:
 
-    Отсутствующий признак не исключается из расчёта,
-    а даёт 0 баллов. Поэтому неполная проверка
-    не может получить 100%.
+    evidence_score:
+        итоговые доказательства из всех возможных;
+
+    quality_score:
+        качество совпадения только по доступным данным;
+
+    coverage_percent:
+        доля признаков, для которых были данные.
     """
 
     components = [
@@ -554,41 +526,120 @@ def calculate_score(
         (width_similarity, 15),
         (height_similarity, 15),
         (color_similarity, 15),
-        (end_similarity, 5),
     ]
 
-    earned = 0.0
-    total_weight = 0.0
+    total_weight = sum(
+        weight
+        for _, weight in components
+    )
+
+    available_weight = 0.0
+    earned_weight = 0.0
 
     for similarity, weight in components:
-        total_weight += weight
-
         if similarity is None:
             continue
 
         similarity = max(
             0.0,
-            min(1.0, float(similarity))
+            min(1.0, float(similarity)),
         )
 
-        earned += similarity * weight
+        available_weight += weight
+        earned_weight += similarity * weight
 
     if total_weight == 0:
-        return 0.0
+        evidence_score = 0.0
+        coverage_percent = 0.0
+    else:
+        evidence_score = (
+            earned_weight / total_weight * 100
+        )
 
-    return round(
-        earned / total_weight * 100,
-        2
+        coverage_percent = (
+            available_weight / total_weight * 100
+        )
+
+    if available_weight == 0:
+        quality_score = 0.0
+    else:
+        quality_score = (
+            earned_weight / available_weight * 100
+        )
+
+    return {
+        "evidence_score": round(
+            evidence_score,
+            2,
+        ),
+        "quality_score": round(
+            quality_score,
+            2,
+        ),
+        "coverage_percent": round(
+            coverage_percent,
+            2,
+        ),
+    }
+
+
+def calculate_score(
+    stitch_similarity: float | None,
+    width_similarity: float | None,
+    height_similarity: float | None,
+    color_similarity: float | None,
+) -> float:
+    """
+    Оставлено для совместимости со старыми тестами.
+    """
+
+    metrics = calculate_match_metrics(
+        stitch_similarity=stitch_similarity,
+        width_similarity=width_similarity,
+        height_similarity=height_similarity,
+        color_similarity=color_similarity,
+    )
+
+    return metrics["evidence_score"]
+
+def is_strict_candidate(
+    stitch_relative_error: float | None,
+    width_relative_error: float | None,
+    color_change_match: bool | None,
+    color_count_match: bool | None,
+) -> bool:
+    """
+    Строгий кандидат должен одновременно иметь:
+
+    - отличие по стежкам не больше 0.1%;
+    - отличие по ширине не больше 1%;
+    - точное совпадение количества смен цветов;
+    - точное совпадение количества цветов.
+    """
+
+    return (
+        stitch_relative_error is not None
+        and stitch_relative_error <= 0.001
+        and width_relative_error is not None
+        and width_relative_error <= 0.01
+        and color_change_match is True
+        and color_count_match is True
     )
 
 
-def get_verdict(score: float) -> str:
+def get_verdict(
+    score: float,
+    strict_candidate: bool,
+) -> str:
+    """
+    Итоговый вывод по паре.
 
-    if score >= 95:
-        return "ОТЛИЧНОЕ СОВПАДЕНИЕ"
+    Строгий кандидат определяется отдельными
+    проверенными условиями, а не только score.
+    """
 
-    if score >= 85:
-        return "СИЛЬНОЕ СОВПАДЕНИЕ"
+    if strict_candidate:
+        return "СТРОГИЙ КАНДИДАТ"
 
     if score >= 70:
         return "ВОЗМОЖНО ОДИН ДИЗАЙН"
@@ -597,7 +648,6 @@ def get_verdict(score: float) -> str:
         return "СЛАБОЕ СОВПАДЕНИЕ"
 
     return "РАЗНЫЕ ДИЗАЙНЫ"
-
 
 def analyze_pair(
     emb_path: Path,
@@ -640,16 +690,9 @@ def analyze_pair(
         dst_header.get("ST")
     )
 
-    stitch_comparison = (
-        select_best_stitch_comparison(
-            ddd_stitch_count=ddd_stitch_count,
-            dst_header_count=dst_header_count,
-            dst_command_count=len(dst_commands),
-            dst_stitch_count=dst_types.get(
-                "stitch",
-                0
-            )
-        )
+    stitch_comparison = compare_stitch_count(
+        ddd_stitch_count=ddd_stitch_count,
+        dst_header_count=dst_header_count,
     )
 
     stitch_similarity = similarity_from_error(
@@ -714,21 +757,45 @@ def analyze_pair(
         dst_height=dst_height
     )
 
-    score = calculate_score(
+    match_metrics = calculate_match_metrics(
         stitch_similarity=stitch_similarity,
         width_similarity=width_similarity,
         height_similarity=height_similarity,
-        color_similarity=colors[
-            "similarity"
+        color_similarity=colors["similarity"],
+    )
+
+    score = match_metrics["evidence_score"]
+
+    strict_candidate = is_strict_candidate(
+        stitch_relative_error=stitch_comparison[
+            "relative_error"
         ],
-        end_similarity=end_position[
-            "similarity"
-        ]
+        width_relative_error=width_error,
+        color_change_match=colors[
+            "change_match"
+        ],
+        color_count_match=colors[
+            "color_count_match"
+        ],
     )
 
     return {
         "score": score,
-        "verdict": get_verdict(score),
+
+        "quality_score": match_metrics[
+            "quality_score"
+        ],
+
+        "coverage_percent": match_metrics[
+            "coverage_percent"
+        ],
+
+        "strict_candidate": strict_candidate,
+
+        "verdict": get_verdict(
+            score=score,
+            strict_candidate=strict_candidate,
+        ),
 
         "normalized_name": normalize_name(
             emb_path.stem
@@ -948,6 +1015,9 @@ def print_top_results(
         )
 
 
+
+
+
 def main():
 
     OUTPUT_DIR.mkdir(
@@ -1099,10 +1169,10 @@ def main():
         limit=30
     )
 
-    strong_matches = [
+    strict_matches = [
         result
         for result in results
-        if result["score"] >= 85
+        if result["strict_candidate"]
     ]
 
     print("\n" + "=" * 120)
@@ -1120,8 +1190,8 @@ def main():
     )
 
     print(
-        "Сильных совпадений:",
-        len(strong_matches)
+        "Строгих кандидатов:",
+        len(strict_matches)
     )
 
     print("\nCSV:")
@@ -1132,6 +1202,8 @@ def main():
 
     print("\nОшибки:")
     print(ERRORS_PATH)
+
+
 
 
 if __name__ == "__main__":
