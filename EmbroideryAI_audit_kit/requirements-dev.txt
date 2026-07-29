@@ -1,0 +1,3 @@
+pytest>=8
+# Нужен только для tests/plot_dst.py и визуальных исследований.
+matplotlib>=3.8

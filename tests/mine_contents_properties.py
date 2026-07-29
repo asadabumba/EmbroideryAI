@@ -35,8 +35,7 @@ OUTPUT_DIR = (
 RESULT_PATH = OUTPUT_DIR / "property_correlations.json"
 
 
-MIN_SCORE = 99.0
-MAX_PAIRS = 40
+MAX_PAIRS = 57
 MIN_SUPPORT = 8
 
 
@@ -647,9 +646,7 @@ def main():
     selected = [
         row
         for row in ranking
-        if float(
-            row.get("score", 0)
-        ) >= MIN_SCORE
+        if row.get("strict_candidate") is True
     ][:MAX_PAIRS]
 
     print(
@@ -775,9 +772,9 @@ def main():
 
     output = {
         "settings": {
-            "minimum_score": MIN_SCORE,
+            "strict_candidates_only": True,
             "maximum_pairs": MAX_PAIRS,
-            "minimum_support": MIN_SUPPORT
+            "minimum_support": MIN_SUPPORT,
         },
         "files": files,
         "correlations": correlations,
