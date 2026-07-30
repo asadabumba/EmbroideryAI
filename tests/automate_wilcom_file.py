@@ -470,6 +470,81 @@ def wait_for_es_main_window(
     )
 
 
+def wait_for_document_open(
+    main_hwnd: int,
+    file_path: Path,
+    timeout: float = 60.0,
+) -> str:
+    """Ждёт появления имени нужного документа в заголовке."""
+
+    expected_stem = file_path.stem
+    expected_casefold = expected_stem.casefold()
+    last_title = ""
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        raise_for_known_open_error_dialog()
+
+        try:
+            last_title = win32gui.GetWindowText(
+                main_hwnd
+            )
+        except Exception:
+            last_title = ""
+
+        if expected_casefold in last_title.casefold():
+            return last_title
+
+        time.sleep(0.25)
+
+    raise TimeoutError(
+        "Wilcom не активировал нужный документ "
+        f"за {timeout:g} секунд.\n"
+        f"Ожидался: {expected_stem}\n"
+        "Фактический заголовок: "
+        f"{last_title or '<пустой заголовок>'}"
+    )
+
+
+def wait_for_document_closed(
+    main_hwnd: int,
+    document_stem: str,
+    timeout: float = 20.0,
+) -> str:
+    """Ждёт исчезновения документа из главного окна Wilcom."""
+
+    expected_casefold = document_stem.casefold()
+    last_title = ""
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            if not win32gui.IsWindow(main_hwnd):
+                return last_title
+        except Exception:
+            return last_title
+
+        try:
+            last_title = win32gui.GetWindowText(
+                main_hwnd
+            )
+        except Exception:
+            last_title = ""
+
+        if expected_casefold not in last_title.casefold():
+            return last_title
+
+        time.sleep(0.25)
+
+    raise TimeoutError(
+        "Wilcom не закрыл документ "
+        f"за {timeout:g} секунд.\n"
+        f"Документ: {document_stem}\n"
+        "Фактический заголовок: "
+        f"{last_title or '<пустой заголовок>'}"
+    )
+
+
 def focus_window(hwnd: int) -> None:
     """Восстанавливает и активирует окно Wilcom."""
 
@@ -483,6 +558,63 @@ def focus_window(hwnd: int) -> None:
 
     try:
         win32gui.SetForegroundWindow(hwnd)
+    except Exception:
+        pass
+
+
+def close_document_and_wait(
+    window,
+    main_hwnd: int,
+    document_stem: str,
+    timeout: float = 20.0,
+) -> str:
+    """Закрывает активный документ и ждёт смены заголовка."""
+
+    focus_window(main_hwnd)
+    window.set_focus()
+
+    window.type_keys(
+        "^{F4}",
+        set_foreground=True,
+    )
+
+    return wait_for_document_closed(
+        main_hwnd,
+        document_stem,
+        timeout=timeout,
+    )
+
+
+def close_document_best_effort(
+    main_hwnd: int,
+    document_stem: str,
+    window=None,
+) -> None:
+    """Пытается закрыть только указанный документ, не скрывая ошибку."""
+
+    try:
+        if not win32gui.IsWindow(main_hwnd):
+            return
+
+        title = win32gui.GetWindowText(
+            main_hwnd
+        )
+
+        if document_stem.casefold() not in title.casefold():
+            return
+
+        if window is None:
+            window = Desktop(
+                backend="uia"
+            ).window(
+                handle=main_hwnd
+            )
+
+        close_document_and_wait(
+            window,
+            main_hwnd,
+            document_stem,
+        )
     except Exception:
         pass
 
@@ -1167,69 +1299,13 @@ def verify_value(
         )
 
 
-def process_emb_file(
-    file_path: Path,
+def process_open_document(
+    window,
+    hwnd: int,
     x: str,
     y: str,
-    es_path: Path | None = None,
-    close: bool = True,
 ) -> dict[str, str]:
-    """Обрабатывает один EMB-файл в Wilcom."""
-
-    file_path = file_path.resolve()
-
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"Файл не найден: {file_path}"
-        )
-
-    es_exe = find_es_exe(
-        es_path
-    )
-
-    print("Wilcom:")
-    print(es_exe)
-
-    print()
-    print("Открываю:")
-    print(file_path)
-
-    print()
-    print("Открываю файл через Windows:")
-    print(file_path)
-
-    os.startfile(
-        str(file_path)
-    )
-
-    raise_for_known_open_error_dialog()
-
-    # Wilcom может открыть файл в уже запущенном
-    # процессе или запустить новый процесс.
-    hwnd = wait_for_es_main_window(
-        timeout=60.0,
-    )
-
-    raise_for_known_open_error_dialog()
-
-    time.sleep(3.0)
-
-    raise_for_known_open_error_dialog()
-
-    print()
-    print("Использую окно Wilcom:")
-    print("HWND:", hwnd)
-    print(
-        "TITLE:",
-        repr(win32gui.GetWindowText(hwnd)),
-    )
-
-    # После загрузки создаём свежую обёртку окна.
-    window = Desktop(
-        backend="uia"
-    ).window(
-        handle=hwnd
-    )
+    """Обрабатывает уже подтверждённо открытый документ."""
 
     focus_window(hwnd)
     raise_for_known_open_error_dialog()
@@ -1332,27 +1408,145 @@ def process_emb_file(
 
     print("Файл сохранён.")
 
-    if close:
-        focus_window(hwnd)
-        window.set_focus()
-
-        window.type_keys(
-            "^{F4}",
-            set_foreground=True,
-        )
-
-        time.sleep(2.0)
-
-        print("Документ закрыт.")
-
     return {
-        "file": str(file_path),
         "old_x": old_x,
         "old_y": old_y,
         "new_x": new_x,
         "new_y": new_y,
-        "status": "success",
     }
+
+
+def process_emb_file(
+    file_path: Path,
+    x: str,
+    y: str,
+    es_path: Path | None = None,
+    close: bool = True,
+) -> dict[str, str]:
+    """Обрабатывает один EMB-файл в Wilcom."""
+
+    file_path = file_path.resolve()
+
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"Файл не найден: {file_path}"
+        )
+
+    es_exe = find_es_exe(
+        es_path
+    )
+
+    print("Wilcom:")
+    print(es_exe)
+
+    print()
+    print("Открываю:")
+    print(file_path)
+
+    windows_before_open = list_es_main_windows()
+    title_before_open = (
+        windows_before_open[0][4]
+        if windows_before_open
+        else ""
+    )
+
+    if title_before_open:
+        print(
+            "TITLE до открытия:",
+            repr(title_before_open),
+        )
+
+    print()
+    print("Открываю файл через Windows:")
+    print(file_path)
+
+    document_stem = file_path.stem
+    hwnd: int | None = None
+    window = None
+    document_opened = False
+    processing_succeeded = False
+
+    try:
+        os.startfile(
+            str(file_path)
+        )
+
+        raise_for_known_open_error_dialog()
+
+        # Wilcom может открыть файл в уже запущенном
+        # процессе или запустить новый процесс.
+        hwnd = wait_for_es_main_window(
+            timeout=60.0,
+        )
+
+        raise_for_known_open_error_dialog()
+
+        active_title = wait_for_document_open(
+            hwnd,
+            file_path,
+            timeout=60.0,
+        )
+        document_opened = True
+
+        time.sleep(0.75)
+        raise_for_known_open_error_dialog()
+
+        print()
+        print("Использую окно Wilcom:")
+        print("HWND:", hwnd)
+        print(
+            "TITLE:",
+            repr(active_title),
+        )
+
+        # UIA-обёртка создаётся только после подтверждения
+        # нужного документа по заголовку.
+        window = Desktop(
+            backend="uia"
+        ).window(
+            handle=hwnd
+        )
+
+        values = process_open_document(
+            window,
+            hwnd,
+            x,
+            y,
+        )
+
+        if close:
+            close_document_and_wait(
+                window,
+                hwnd,
+                document_stem,
+                timeout=20.0,
+            )
+            document_opened = False
+
+            print("Документ закрыт.")
+
+        processing_succeeded = True
+
+        return {
+            "file": str(file_path),
+            **values,
+            "status": "success",
+        }
+
+    finally:
+        if (
+            document_opened
+            and not processing_succeeded
+            and hwnd is not None
+        ):
+            try:
+                close_document_best_effort(
+                    hwnd,
+                    document_stem,
+                    window=window,
+                )
+            except Exception:
+                pass
 
 
 def main() -> None:

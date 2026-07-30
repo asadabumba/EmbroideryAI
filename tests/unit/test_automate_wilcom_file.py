@@ -476,3 +476,543 @@ def test_wait_for_selected_design_alternates_methods(
         "pywinauto",
         "win32",
     ]
+
+
+def test_wait_for_document_open_sees_expected_stem_immediately(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    title = (
+        "Wilcom - "
+        "[Hatch_Halloween-Quilt - Pumpkin_e3 Janome]"
+    )
+
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: title,
+    )
+
+    result = automation.wait_for_document_open(
+        123,
+        Path("Hatch_Halloween-Quilt - Pumpkin_e3.EMB"),
+    )
+
+    assert result == title
+
+
+def test_wait_for_document_open_waits_for_title_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles = iter(
+        [
+            "Wilcom - [Ghost_e3]",
+            "Wilcom - [Pumpkin_e3]",
+        ]
+    )
+
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: next(titles),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    result = automation.wait_for_document_open(
+        123,
+        Path("Pumpkin_e3.EMB"),
+    )
+
+    assert result == "Wilcom - [Pumpkin_e3]"
+
+
+def test_wait_for_document_open_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: "Wilcom - [PUMPKIN_E3]",
+    )
+
+    result = automation.wait_for_document_open(
+        123,
+        Path("pumpkin_e3.EMB"),
+    )
+
+    assert result == "Wilcom - [PUMPKIN_E3]"
+
+
+def test_wait_for_document_open_timeout_shows_titles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    times = iter(
+        [
+            0.0,
+            0.0,
+            61.0,
+        ]
+    )
+
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: "Wilcom - [Ghost_e3]",
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "time",
+        lambda: next(times),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    with pytest.raises(TimeoutError) as error_info:
+        automation.wait_for_document_open(
+            123,
+            Path("Pumpkin_e3.EMB"),
+            timeout=60.0,
+        )
+
+    message = str(error_info.value)
+    assert "за 60 секунд" in message
+    assert "Ожидался: Pumpkin_e3" in message
+    assert (
+        "Фактический заголовок: "
+        "Wilcom - [Ghost_e3]"
+        in message
+    )
+
+
+def test_wait_for_document_open_checks_known_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checks = 0
+
+    def raise_known_error() -> None:
+        nonlocal checks
+        checks += 1
+        raise RuntimeError("Известная ошибка открытия")
+
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        raise_known_error,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: pytest.fail(
+            "Заголовок не должен читаться после известной ошибки"
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Известная ошибка открытия",
+    ):
+        automation.wait_for_document_open(
+            123,
+            Path("Pumpkin_e3.EMB"),
+        )
+
+    assert checks == 1
+
+
+def test_wait_for_document_closed_waits_for_stem_to_disappear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles = iter(
+        [
+            "Wilcom - [Pumpkin_e3]",
+            "Wilcom - No Design",
+        ]
+    )
+
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: next(titles),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    result = automation.wait_for_document_closed(
+        123,
+        "Pumpkin_e3",
+    )
+
+    assert result == "Wilcom - No Design"
+
+
+def test_wait_for_document_closed_handles_destroyed_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: False,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: pytest.fail(
+            "У уничтоженного окна нельзя читать заголовок"
+        ),
+    )
+
+    result = automation.wait_for_document_closed(
+        123,
+        "Pumpkin_e3",
+    )
+
+    assert result == ""
+
+
+def test_close_document_waits_after_ctrl_f4(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+
+    class FakeWindow:
+        def set_focus(self) -> None:
+            events.append("set_focus")
+
+        def type_keys(
+            self,
+            keys: str,
+            set_foreground: bool,
+        ) -> None:
+            events.append(
+                (
+                    "type_keys",
+                    keys,
+                    set_foreground,
+                )
+            )
+
+    def wait_closed(
+        main_hwnd: int,
+        document_stem: str,
+        timeout: float,
+    ) -> str:
+        events.append(
+            (
+                "wait_closed",
+                main_hwnd,
+                document_stem,
+                timeout,
+            )
+        )
+        return "Wilcom - No Design"
+
+    monkeypatch.setattr(
+        automation,
+        "focus_window",
+        lambda hwnd: events.append(
+            (
+                "focus",
+                hwnd,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        automation,
+        "wait_for_document_closed",
+        wait_closed,
+    )
+
+    result = automation.close_document_and_wait(
+        FakeWindow(),
+        main_hwnd=123,
+        document_stem="Pumpkin_e3",
+    )
+
+    assert result == "Wilcom - No Design"
+    assert events == [
+        (
+            "focus",
+            123,
+        ),
+        "set_focus",
+        (
+            "type_keys",
+            "^{F4}",
+            True,
+        ),
+        (
+            "wait_closed",
+            123,
+            "Pumpkin_e3",
+            20.0,
+        ),
+    ]
+
+
+def test_process_creates_uia_only_after_document_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "Pumpkin_e3.EMB"
+    file_path.write_bytes(b"EMB")
+    events: list[str] = []
+
+    class FakeWindow:
+        pass
+
+    fake_window = FakeWindow()
+
+    class FakeDesktop:
+        def window(self, handle: int):
+            assert handle == 123
+            events.append("uia_window")
+            return fake_window
+
+    def desktop_factory(backend: str) -> FakeDesktop:
+        assert backend == "uia"
+        events.append("desktop")
+        return FakeDesktop()
+
+    def wait_open(
+        main_hwnd: int,
+        opened_path: Path,
+        timeout: float,
+    ) -> str:
+        assert main_hwnd == 123
+        assert opened_path == file_path
+        assert timeout == 60.0
+        events.append("wait_open")
+        return "Wilcom - [Pumpkin_e3]"
+
+    def process_document(
+        window,
+        hwnd: int,
+        x: str,
+        y: str,
+    ) -> dict[str, str]:
+        assert window is fake_window
+        assert hwnd == 123
+        assert x == "14"
+        assert y == "0.74"
+        events.append("process")
+        return {
+            "old_x": "0.00",
+            "old_y": "0.78",
+            "new_x": "14.00",
+            "new_y": "0.74",
+        }
+
+    def close_document(
+        window,
+        main_hwnd: int,
+        document_stem: str,
+        timeout: float,
+    ) -> str:
+        assert window is fake_window
+        assert main_hwnd == 123
+        assert document_stem == "Pumpkin_e3"
+        assert timeout == 20.0
+        events.append("close")
+        return "Wilcom - No Design"
+
+    monkeypatch.setattr(
+        automation,
+        "find_es_exe",
+        lambda _: Path("ES.EXE"),
+    )
+    monkeypatch.setattr(
+        automation,
+        "list_es_main_windows",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        automation.os,
+        "startfile",
+        lambda _: events.append("startfile"),
+    )
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "wait_for_es_main_window",
+        lambda timeout: 123,
+    )
+    monkeypatch.setattr(
+        automation,
+        "wait_for_document_open",
+        wait_open,
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "Desktop",
+        desktop_factory,
+    )
+    monkeypatch.setattr(
+        automation,
+        "process_open_document",
+        process_document,
+    )
+    monkeypatch.setattr(
+        automation,
+        "close_document_and_wait",
+        close_document,
+    )
+
+    result = automation.process_emb_file(
+        file_path=file_path,
+        x="14",
+        y="0.74",
+        close=True,
+    )
+
+    assert events.index("wait_open") < events.index("desktop")
+    assert events.index("uia_window") < events.index("process")
+    assert events.index("process") < events.index("close")
+    assert result["status"] == "success"
+    assert result["new_x"] == "14.00"
+
+
+def test_process_cleanup_does_not_hide_original_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    file_path = tmp_path / "Pumpkin_e3.EMB"
+    file_path.write_bytes(b"EMB")
+    fake_window = object()
+    cleanup_calls: list[
+        tuple[int, str, object]
+    ] = []
+
+    class FakeDesktop:
+        def window(self, handle: int):
+            assert handle == 123
+            return fake_window
+
+    def fail_processing(*_) -> dict[str, str]:
+        raise ValueError("Исходная ошибка обработки")
+
+    def fail_cleanup(
+        main_hwnd: int,
+        document_stem: str,
+        window,
+    ) -> None:
+        cleanup_calls.append(
+            (
+                main_hwnd,
+                document_stem,
+                window,
+            )
+        )
+        raise RuntimeError("Ошибка cleanup")
+
+    monkeypatch.setattr(
+        automation,
+        "find_es_exe",
+        lambda _: Path("ES.EXE"),
+    )
+    monkeypatch.setattr(
+        automation,
+        "list_es_main_windows",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        automation.os,
+        "startfile",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "wait_for_es_main_window",
+        lambda timeout: 123,
+    )
+    monkeypatch.setattr(
+        automation,
+        "wait_for_document_open",
+        lambda *_, **__: "Wilcom - [Pumpkin_e3]",
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "Desktop",
+        lambda backend: FakeDesktop(),
+    )
+    monkeypatch.setattr(
+        automation,
+        "process_open_document",
+        fail_processing,
+    )
+    monkeypatch.setattr(
+        automation,
+        "close_document_best_effort",
+        fail_cleanup,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Исходная ошибка обработки",
+    ):
+        automation.process_emb_file(
+            file_path=file_path,
+            x="14",
+            y="0.74",
+            close=True,
+        )
+
+    assert cleanup_calls == [
+        (
+            123,
+            "Pumpkin_e3",
+            fake_window,
+        )
+    ]
