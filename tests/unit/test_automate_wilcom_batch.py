@@ -251,6 +251,11 @@ def test_keyboard_interrupt_records_current_row(
         "dismiss_known_open_error_dialog",
         cleanup_dialog,
     )
+    monkeypatch.setattr(
+        batch,
+        "dismiss_save_changes_dialog",
+        lambda **_: False,
+    )
 
     with pytest.raises(KeyboardInterrupt):
         batch.run_batch(
@@ -337,6 +342,11 @@ def test_batch_cleans_dialog_before_next_row(
         "dismiss_known_open_error_dialog",
         cleanup_dialog,
     )
+    monkeypatch.setattr(
+        batch,
+        "dismiss_save_changes_dialog",
+        lambda **_: False,
+    )
 
     results = batch.run_batch(
         csv_path=csv_path,
@@ -350,6 +360,44 @@ def test_batch_cleans_dialog_before_next_row(
         for result in results
     ] == ["error", "success"]
     assert cleanup_calls == 2
+
+
+def test_batch_cleanup_discards_save_dialog_before_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    save_dialog_calls: list[
+        tuple[str | None, bool, float]
+    ] = []
+
+    monkeypatch.setattr(
+        batch,
+        "dismiss_save_changes_dialog",
+        lambda document_stem, save, timeout: (
+            save_dialog_calls.append(
+                (
+                    document_stem,
+                    save,
+                    timeout,
+                )
+            )
+            or True
+        ),
+    )
+    monkeypatch.setattr(
+        batch,
+        "dismiss_known_open_error_dialog",
+        lambda: None,
+    )
+
+    batch.cleanup_wilcom_best_effort()
+
+    assert save_dialog_calls == [
+        (
+            None,
+            False,
+            1.0,
+        )
+    ]
 
 
 def make_report_result(

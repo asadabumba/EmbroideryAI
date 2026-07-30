@@ -20,6 +20,7 @@ if str(TESTS_DIR) not in sys.path:
 
 from automate_wilcom_file import (
     dismiss_known_open_error_dialog,
+    dismiss_save_changes_dialog,
     process_emb_file,
 )
 
@@ -934,6 +935,15 @@ def remove_file_best_effort(
 
 def cleanup_wilcom_best_effort() -> None:
     """Закрывает известные модальные ошибки, не маскируя исходную ошибку."""
+
+    try:
+        dismiss_save_changes_dialog(
+            document_stem=None,
+            save=False,
+            timeout=1.0,
+        )
+    except Exception:
+        pass
 
     try:
         for _ in range(3):
