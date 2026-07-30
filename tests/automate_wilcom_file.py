@@ -4,16 +4,21 @@ import time
 from pathlib import Path
 
 import psutil
+import win32api
 import win32con
 import win32gui
 import win32process
-from pywinauto import Desktop, mouse
+from pywinauto import Desktop, keyboard, mouse
 
 
 X_AUTOMATION_ID = "6586"
 Y_AUTOMATION_ID = "6587"
 OPEN_DESIGN_ERROR_TITLE = "Невозможно открыть дизайн"
 PREFERRED_WINDOW_TITLE = "Ultimate Special Edition"
+DOCUMENT_CANVAS_CLASS = "AfxFrameOrView140u"
+
+_LOGGED_CANVAS_HANDLES: set[int] = set()
+_LOGGED_SELECTION_METHODS: set[str] = set()
 
 DEFAULT_ES_EXE = Path(
     r"D:\AAAAAAAAAAA\EmbroideryStudio_e4.2\BIN\ES.EXE"
@@ -482,9 +487,62 @@ def focus_window(hwnd: int) -> None:
         pass
 
 
+def build_document_canvas_candidate(
+    hwnd: int,
+    class_name: str,
+    visible: bool,
+    rectangle: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    """Создаёт кандидата рабочего поля из данных Win32."""
+
+    if not visible:
+        return None
+
+    if class_name != DOCUMENT_CANVAS_CLASS:
+        return None
+
+    left, top, right, bottom = rectangle
+    width = right - left
+    height = bottom - top
+
+    if width < 200 or height < 150:
+        return None
+
+    center_x = left + width // 2
+    center_y = top + height // 2
+
+    return (
+        width * height,
+        hwnd,
+        center_x,
+        center_y,
+    )
+
+
+def choose_document_canvas_candidate(
+    candidates: list[tuple[int, int, int, int]],
+) -> tuple[int, int, int] | None:
+    """Выбирает самое большое подходящее рабочее поле."""
+
+    if not candidates:
+        return None
+
+    (
+        _,
+        hwnd,
+        center_x,
+        center_y,
+    ) = max(
+        candidates,
+        key=lambda candidate: candidate[0],
+    )
+
+    return hwnd, center_x, center_y
+
+
 def find_document_canvas(
     main_hwnd: int,
-) -> tuple[int, int] | None:
+) -> tuple[int, int, int] | None:
     """
     Ищет большое рабочее поле документа Wilcom.
 
@@ -493,41 +551,26 @@ def find_document_canvas(
     """
 
     candidates: list[
-        tuple[int, int, int]
+        tuple[int, int, int, int]
     ] = []
 
     def callback(hwnd: int, _) -> None:
-        if not win32gui.IsWindowVisible(hwnd):
-            return
-
         try:
             class_name = win32gui.GetClassName(hwnd)
+            visible = win32gui.IsWindowVisible(hwnd)
+            rectangle = win32gui.GetWindowRect(hwnd)
         except Exception:
             return
 
-        if class_name != "AfxFrameOrView140u":
-            return
-
-        left, top, right, bottom = (
-            win32gui.GetWindowRect(hwnd)
+        candidate = build_document_canvas_candidate(
+            hwnd=hwnd,
+            class_name=class_name,
+            visible=visible,
+            rectangle=rectangle,
         )
 
-        width = right - left
-        height = bottom - top
-
-        if width < 200 or height < 150:
-            return
-
-        center_x = left + width // 2
-        center_y = top + height // 2
-
-        candidates.append(
-            (
-                width * height,
-                center_x,
-                center_y,
-            )
-        )
+        if candidate is not None:
+            candidates.append(candidate)
 
     win32gui.EnumChildWindows(
         main_hwnd,
@@ -535,26 +578,99 @@ def find_document_canvas(
         None,
     )
 
-    if not candidates:
-        return None
-
-    candidates.sort(reverse=True)
-
-    _, x, y = candidates[0]
-
-    return x, y
+    return choose_document_canvas_candidate(
+        candidates
+    )
 
 
-def click_document_canvas(
-    main_hwnd: int,
+def log_document_canvas_once(
+    canvas_hwnd: int,
 ) -> None:
-    """Кликает по рабочему полю, чтобы Ctrl+A выбрал дизайн."""
+    """Печатает сведения о рабочем поле один раз для каждого HWND."""
 
-    point = find_document_canvas(
+    if canvas_hwnd in _LOGGED_CANVAS_HANDLES:
+        return
+
+    try:
+        class_name = win32gui.GetClassName(
+            canvas_hwnd
+        )
+        rectangle = win32gui.GetWindowRect(
+            canvas_hwnd
+        )
+    except Exception:
+        class_name = "<unknown>"
+        rectangle = None
+
+    print()
+    print("Рабочее поле:")
+    print("HWND:", canvas_hwnd)
+    print("CLASS:", repr(class_name))
+    print("RECT:", rectangle)
+
+    _LOGGED_CANVAS_HANDLES.add(canvas_hwnd)
+
+
+def send_ctrl_a_win32() -> None:
+    """Отправляет Ctrl+A через виртуальные клавиши Win32."""
+
+    vk_a = ord("A")
+
+    try:
+        win32api.keybd_event(
+            win32con.VK_CONTROL,
+            0,
+            0,
+            0,
+        )
+        time.sleep(0.05)
+
+        win32api.keybd_event(
+            vk_a,
+            0,
+            0,
+            0,
+        )
+        time.sleep(0.05)
+    finally:
+        try:
+            win32api.keybd_event(
+                vk_a,
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+            time.sleep(0.05)
+        finally:
+            win32api.keybd_event(
+                win32con.VK_CONTROL,
+                0,
+                win32con.KEYEVENTF_KEYUP,
+                0,
+            )
+
+
+def select_all_design_objects(
+    main_hwnd: int,
+    method: str = "win32",
+) -> None:
+    """Фокусирует рабочее поле и глобально отправляет Ctrl+A."""
+
+    if method not in {
+        "win32",
+        "pywinauto",
+    }:
+        raise ValueError(
+            f"Неизвестный метод выделения: {method}"
+        )
+
+    focus_window(main_hwnd)
+
+    canvas = find_document_canvas(
         main_hwnd
     )
 
-    if point is None:
+    if canvas is None:
         left, top, right, bottom = (
             win32gui.GetWindowRect(main_hwnd)
         )
@@ -563,15 +679,63 @@ def click_document_canvas(
         height = bottom - top
 
         # Запасная точка в правой центральной части окна.
-        point = (
-            left + int(width * 0.68),
-            top + int(height * 0.60),
+        mouse.click(
+            button="left",
+            coords=(
+                left + int(width * 0.68),
+                top + int(height * 0.60),
+            ),
+        )
+    else:
+        (
+            canvas_hwnd,
+            center_x,
+            center_y,
+        ) = canvas
+
+        log_document_canvas_once(
+            canvas_hwnd
         )
 
-    mouse.click(
-        button="left",
-        coords=point,
-    )
+        try:
+            canvas_wrapper = Desktop(
+                backend="win32"
+            ).window(
+                handle=canvas_hwnd
+            ).wrapper_object()
+
+            canvas_wrapper.click_input()
+        except Exception:
+            mouse.click(
+                button="left",
+                coords=(
+                    center_x,
+                    center_y,
+                ),
+            )
+
+    time.sleep(0.3)
+
+    focus_window(main_hwnd)
+
+    if method == "win32":
+        if method not in _LOGGED_SELECTION_METHODS:
+            print()
+            print(
+                "Метод выделения: "
+                "win32 VK_CONTROL + VK_A"
+            )
+            _LOGGED_SELECTION_METHODS.add(method)
+
+        send_ctrl_a_win32()
+    else:
+        keyboard.send_keys(
+            "^a",
+            pause=0.05,
+            vk_packet=False,
+        )
+
+    time.sleep(0.8)
 
 
 def is_control_visible(control) -> bool:
@@ -857,6 +1021,7 @@ def wait_for_selected_design(
 
     deadline = time.time() + timeout
     last_error: Exception | None = None
+    selection_attempt = 0
 
     while time.time() < deadline:
         raise_for_known_open_error_dialog()
@@ -865,18 +1030,17 @@ def wait_for_selected_design(
             focus_window(main_hwnd)
             window.set_focus()
 
-            click_document_canvas(
-                main_hwnd
+            method = (
+                "win32"
+                if selection_attempt % 2 == 0
+                else "pywinauto"
             )
+            selection_attempt += 1
 
-            time.sleep(0.3)
-
-            window.type_keys(
-                "^a",
-                set_foreground=True,
+            select_all_design_objects(
+                main_hwnd,
+                method=method,
             )
-
-            time.sleep(0.8)
 
             controls = get_position_controls(
                 window,
@@ -890,9 +1054,15 @@ def wait_for_selected_design(
             raise_for_known_open_error_dialog()
             time.sleep(0.7)
 
+    reason = (
+        str(last_error)
+        if last_error is not None
+        else "причина не определена"
+    )
+
     raise RuntimeError(
-        "Документ не загрузился или дизайн "
-        "не удалось выделить за 60 секунд."
+        "Документ открыт, но дизайн не удалось выделить:\n"
+        f"{reason}"
     ) from last_error
 
 
