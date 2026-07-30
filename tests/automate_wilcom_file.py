@@ -14,6 +14,16 @@ from pywinauto import Desktop, keyboard, mouse
 X_AUTOMATION_ID = "6586"
 Y_AUTOMATION_ID = "6587"
 OPEN_DESIGN_ERROR_TITLE = "Невозможно открыть дизайн"
+SAVE_CHANGES_MARKERS = (
+    "сохранить изменения в",
+    "save changes to",
+    "save changes in",
+    "änderungen an",
+)
+SAVE_BUTTON_TEXTS = {
+    True: {"да", "yes", "ja"},
+    False: {"нет", "no", "nein"},
+}
 PREFERRED_WINDOW_TITLE = "Ultimate Special Edition"
 DOCUMENT_CANVAS_CLASS = "AfxFrameOrView140u"
 
@@ -225,6 +235,208 @@ def get_window_texts(hwnd: int) -> list[str]:
         pass
 
     return texts
+
+
+def is_es_process_window(hwnd: int) -> bool:
+    """Проверяет принадлежность верхнеуровневого окна ES.EXE."""
+
+    try:
+        _, pid = win32process.GetWindowThreadProcessId(
+            hwnd
+        )
+        process_name = psutil.Process(pid).name()
+    except Exception:
+        return False
+
+    return process_name.casefold() == "es.exe"
+
+
+def is_save_changes_dialog_text(
+    texts: list[str],
+) -> bool:
+    combined = " ".join(texts).casefold()
+
+    return any(
+        marker in combined
+        for marker in SAVE_CHANGES_MARKERS
+    )
+
+
+def find_save_changes_dialog(
+    document_stem: str | None = None,
+) -> tuple[int, list[str]] | None:
+    """Находит видимый диалог сохранения процесса ES.EXE."""
+
+    matches: list[
+        tuple[int, int, int, list[str]]
+    ] = []
+    expected_stem = (
+        document_stem.casefold()
+        if document_stem
+        else ""
+    )
+
+    def callback(hwnd: int, _) -> None:
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return
+
+            if not is_es_process_window(hwnd):
+                return
+
+            class_name = win32gui.GetClassName(
+                hwnd
+            )
+            texts = get_window_texts(hwnd)
+        except Exception:
+            return
+
+        if not is_save_changes_dialog_text(texts):
+            return
+
+        combined = " ".join(texts).casefold()
+        stem_matches = int(
+            bool(expected_stem)
+            and expected_stem in combined
+        )
+        dialog_class = int(
+            class_name == "#32770"
+        )
+        matches.append(
+            (
+                stem_matches,
+                dialog_class,
+                hwnd,
+                texts,
+            )
+        )
+
+    win32gui.EnumWindows(
+        callback,
+        None,
+    )
+
+    if not matches:
+        return None
+
+    matches.sort(
+        key=lambda match: (
+            match[0],
+            match[1],
+        ),
+        reverse=True,
+    )
+    _, _, hwnd, texts = matches[0]
+
+    return hwnd, texts
+
+
+def find_dialog_button_by_text(
+    dialog_hwnd: int,
+    allowed_texts: set[str],
+) -> int:
+    buttons: list[int] = []
+
+    def callback(child_hwnd: int, _) -> None:
+        try:
+            class_name = win32gui.GetClassName(
+                child_hwnd
+            )
+            text = (
+                win32gui.GetWindowText(child_hwnd)
+                .replace("&", "")
+                .strip()
+                .casefold()
+            )
+        except Exception:
+            return
+
+        if (
+            class_name == "Button"
+            and text in allowed_texts
+        ):
+            buttons.append(child_hwnd)
+
+    try:
+        win32gui.EnumChildWindows(
+            dialog_hwnd,
+            callback,
+            None,
+        )
+    except Exception:
+        return 0
+
+    return buttons[0] if buttons else 0
+
+
+def dismiss_save_changes_dialog(
+    document_stem: str | None,
+    save: bool,
+    timeout: float = 5.0,
+) -> bool:
+    """Нажимает только «Да» либо «Нет» и ждёт закрытия диалога."""
+
+    match = find_save_changes_dialog(
+        document_stem
+    )
+
+    if match is None:
+        return False
+
+    dialog_hwnd, _ = match
+    button_id = (
+        win32con.IDYES
+        if save
+        else win32con.IDNO
+    )
+    button_hwnd = 0
+
+    try:
+        button_hwnd = win32gui.GetDlgItem(
+            dialog_hwnd,
+            button_id,
+        )
+    except Exception:
+        pass
+
+    if not button_hwnd:
+        button_hwnd = find_dialog_button_by_text(
+            dialog_hwnd,
+            SAVE_BUTTON_TEXTS[save],
+        )
+
+    if not button_hwnd:
+        return False
+
+    try:
+        win32gui.PostMessage(
+            button_hwnd,
+            win32con.BM_CLICK,
+            0,
+            0,
+        )
+    except Exception:
+        return False
+
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            closed = (
+                not win32gui.IsWindow(dialog_hwnd)
+                or not win32gui.IsWindowVisible(
+                    dialog_hwnd
+                )
+            )
+        except Exception:
+            closed = True
+
+        if closed:
+            return True
+
+        time.sleep(0.05)
+
+    return False
 
 
 def find_known_open_error_dialog(
@@ -485,6 +697,29 @@ def wait_for_document_open(
     while time.time() < deadline:
         raise_for_known_open_error_dialog()
 
+        save_dialog = find_save_changes_dialog()
+
+        if save_dialog is not None:
+            _, dialog_texts = save_dialog
+            dismissed = dismiss_save_changes_dialog(
+                document_stem=None,
+                save=False,
+                timeout=3.0,
+            )
+            details = " | ".join(dialog_texts)
+            cleanup_status = (
+                "Диалог закрыт без сохранения."
+                if dismissed
+                else "Диалог не удалось закрыть."
+            )
+            raise RuntimeError(
+                "Открытие нового файла заблокировано "
+                "диалогом сохранения предыдущего документа. "
+                f"{cleanup_status}\n"
+                f"Тексты диалога: "
+                f"{details or '<нет доступного текста>'}"
+            )
+
         try:
             last_title = win32gui.GetWindowText(
                 main_hwnd
@@ -531,7 +766,10 @@ def wait_for_document_closed(
         except Exception:
             last_title = ""
 
-        if expected_casefold not in last_title.casefold():
+        if not title_contains_document(
+            last_title,
+            expected_casefold,
+        ):
             return last_title
 
         time.sleep(0.25)
@@ -543,6 +781,20 @@ def wait_for_document_closed(
         "Фактический заголовок: "
         f"{last_title or '<пустой заголовок>'}"
     )
+
+
+def title_contains_document(
+    title: str,
+    document_stem: str,
+) -> bool:
+    """Отличает имя документа от стандартного состояния No Design."""
+
+    normalized_title = title.casefold()
+
+    if "no design" in normalized_title:
+        return False
+
+    return document_stem.casefold() in normalized_title
 
 
 def focus_window(hwnd: int) -> None:
@@ -567,21 +819,80 @@ def close_document_and_wait(
     main_hwnd: int,
     document_stem: str,
     timeout: float = 20.0,
+    save: bool = True,
 ) -> str:
-    """Закрывает активный документ и ждёт смены заголовка."""
+    """Закрывает документ, отвечая на возможный запрос сохранения."""
 
     focus_window(main_hwnd)
-    window.set_focus()
 
-    window.type_keys(
-        "^{F4}",
-        set_foreground=True,
+    if window is not None:
+        try:
+            window.set_focus()
+        except Exception:
+            # Уже открытый модальный диалог может блокировать UIA-фокус.
+            pass
+
+    send_ctrl_virtual_key(
+        win32con.VK_F4
     )
+    expected_casefold = document_stem.casefold()
+    last_title = ""
+    save_dialog_seen = False
+    last_dialog_texts: list[str] = []
+    deadline = time.time() + timeout
 
-    return wait_for_document_closed(
-        main_hwnd,
-        document_stem,
-        timeout=timeout,
+    while time.time() < deadline:
+        try:
+            if not win32gui.IsWindow(main_hwnd):
+                return last_title
+        except Exception:
+            return last_title
+
+        try:
+            last_title = win32gui.GetWindowText(
+                main_hwnd
+            )
+        except Exception:
+            last_title = ""
+
+        save_dialog = find_save_changes_dialog(
+            document_stem
+        )
+
+        if save_dialog is not None:
+            save_dialog_seen = True
+            _, last_dialog_texts = save_dialog
+            remaining = max(
+                0.0,
+                deadline - time.time(),
+            )
+            dismiss_save_changes_dialog(
+                document_stem,
+                save=save,
+                timeout=min(5.0, remaining),
+            )
+        elif not title_contains_document(
+            last_title,
+            expected_casefold,
+        ):
+            return last_title
+
+        time.sleep(0.15)
+
+    dialog_details = (
+        " | ".join(last_dialog_texts)
+        if last_dialog_texts
+        else "<нет доступного текста>"
+    )
+    raise TimeoutError(
+        "Wilcom не закрыл документ "
+        f"за {timeout:g} секунд.\n"
+        f"Документ: {document_stem}\n"
+        "Фактический заголовок: "
+        f"{last_title or '<пустой заголовок>'}\n"
+        "Диалог сохранения найден: "
+        f"{'да' if save_dialog_seen else 'нет'}\n"
+        f"Тексты диалога: {dialog_details}"
     )
 
 
@@ -599,21 +910,34 @@ def close_document_best_effort(
         title = win32gui.GetWindowText(
             main_hwnd
         )
+        save_dialog = find_save_changes_dialog(
+            document_stem
+        )
 
-        if document_stem.casefold() not in title.casefold():
+        if (
+            not title_contains_document(
+                title,
+                document_stem,
+            )
+            and save_dialog is None
+        ):
             return
 
         if window is None:
-            window = Desktop(
-                backend="uia"
-            ).window(
-                handle=main_hwnd
-            )
+            try:
+                window = Desktop(
+                    backend="uia"
+                ).window(
+                    handle=main_hwnd
+                )
+            except Exception:
+                window = None
 
         close_document_and_wait(
             window,
             main_hwnd,
             document_stem,
+            save=False,
         )
     except Exception:
         pass
@@ -743,10 +1067,10 @@ def log_document_canvas_once(
     _LOGGED_CANVAS_HANDLES.add(canvas_hwnd)
 
 
-def send_ctrl_a_win32() -> None:
-    """Отправляет Ctrl+A через виртуальные клавиши Win32."""
-
-    vk_a = ord("A")
+def send_ctrl_virtual_key(
+    vk_code: int,
+) -> None:
+    """Отправляет Ctrl+VK и гарантированно освобождает обе клавиши."""
 
     try:
         win32api.keybd_event(
@@ -758,7 +1082,7 @@ def send_ctrl_a_win32() -> None:
         time.sleep(0.05)
 
         win32api.keybd_event(
-            vk_a,
+            vk_code,
             0,
             0,
             0,
@@ -767,7 +1091,7 @@ def send_ctrl_a_win32() -> None:
     finally:
         try:
             win32api.keybd_event(
-                vk_a,
+                vk_code,
                 0,
                 win32con.KEYEVENTF_KEYUP,
                 0,
@@ -780,6 +1104,14 @@ def send_ctrl_a_win32() -> None:
                 win32con.KEYEVENTF_KEYUP,
                 0,
             )
+
+
+def send_ctrl_a_win32() -> None:
+    """Отправляет раскладко-независимый Ctrl+A."""
+
+    send_ctrl_virtual_key(
+        ord("A")
+    )
 
 
 def select_all_design_objects(
@@ -1299,6 +1631,22 @@ def verify_value(
         )
 
 
+def send_save_command(
+    window,
+    main_hwnd: int,
+) -> None:
+    """Отправляет раскладко-независимый Ctrl+S."""
+
+    focus_window(main_hwnd)
+    window.set_focus()
+    send_ctrl_virtual_key(
+        ord("S")
+    )
+    time.sleep(0.75)
+
+    print("Команда сохранения отправлена.")
+
+
 def process_open_document(
     window,
     hwnd: int,
@@ -1396,17 +1744,10 @@ def process_open_document(
     print()
     print("Сохраняю...")
 
-    focus_window(hwnd)
-    window.set_focus()
-
-    window.type_keys(
-        "^s",
-        set_foreground=True,
+    send_save_command(
+        window,
+        hwnd,
     )
-
-    time.sleep(4.0)
-
-    print("Файл сохранён.")
 
     return {
         "old_x": old_x,
@@ -1520,9 +1861,11 @@ def process_emb_file(
                 hwnd,
                 document_stem,
                 timeout=20.0,
+                save=True,
             )
             document_opened = False
 
+            print("Файл сохранён.")
             print("Документ закрыт.")
 
         processing_succeeded = True

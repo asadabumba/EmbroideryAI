@@ -492,6 +492,11 @@ def test_wait_for_document_open_sees_expected_stem_immediately(
         lambda: None,
     )
     monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
         automation.win32gui,
         "GetWindowText",
         lambda _: title,
@@ -521,6 +526,11 @@ def test_wait_for_document_open_waits_for_title_change(
         lambda: None,
     )
     monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
         automation.win32gui,
         "GetWindowText",
         lambda _: next(titles),
@@ -546,6 +556,11 @@ def test_wait_for_document_open_is_case_insensitive(
         automation,
         "raise_for_known_open_error_dialog",
         lambda: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         automation.win32gui,
@@ -576,6 +591,11 @@ def test_wait_for_document_open_timeout_shows_titles(
         automation,
         "raise_for_known_open_error_dialog",
         lambda: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         automation.win32gui,
@@ -712,33 +732,12 @@ def test_close_document_waits_after_ctrl_f4(
         def set_focus(self) -> None:
             events.append("set_focus")
 
-        def type_keys(
-            self,
-            keys: str,
-            set_foreground: bool,
-        ) -> None:
-            events.append(
-                (
-                    "type_keys",
-                    keys,
-                    set_foreground,
-                )
-            )
-
-    def wait_closed(
-        main_hwnd: int,
-        document_stem: str,
-        timeout: float,
-    ) -> str:
-        events.append(
-            (
-                "wait_closed",
-                main_hwnd,
-                document_stem,
-                timeout,
-            )
-        )
-        return "Wilcom - No Design"
+    titles = iter(
+        [
+            "Wilcom - [Pumpkin_e3]",
+            "Wilcom - No Design",
+        ]
+    )
 
     monkeypatch.setattr(
         automation,
@@ -752,8 +751,33 @@ def test_close_document_waits_after_ctrl_f4(
     )
     monkeypatch.setattr(
         automation,
-        "wait_for_document_closed",
-        wait_closed,
+        "send_ctrl_virtual_key",
+        lambda vk_code: events.append(
+            (
+                "hotkey",
+                vk_code,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: next(titles),
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
     )
 
     result = automation.close_document_and_wait(
@@ -770,15 +794,8 @@ def test_close_document_waits_after_ctrl_f4(
         ),
         "set_focus",
         (
-            "type_keys",
-            "^{F4}",
-            True,
-        ),
-        (
-            "wait_closed",
-            123,
-            "Pumpkin_e3",
-            20.0,
+            "hotkey",
+            automation.win32con.VK_F4,
         ),
     ]
 
@@ -841,11 +858,13 @@ def test_process_creates_uia_only_after_document_confirmation(
         main_hwnd: int,
         document_stem: str,
         timeout: float,
+        save: bool,
     ) -> str:
         assert window is fake_window
         assert main_hwnd == 123
         assert document_stem == "Pumpkin_e3"
         assert timeout == 20.0
+        assert save is True
         events.append("close")
         return "Wilcom - No Design"
 
@@ -1016,3 +1035,723 @@ def test_process_cleanup_does_not_hide_original_error(
             fake_window,
         )
     ]
+
+
+def test_send_ctrl_virtual_key_releases_both_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[int, int]] = []
+
+    def record_event(
+        virtual_key: int,
+        _scan_code: int,
+        flags: int,
+        _extra_info: int,
+    ) -> None:
+        events.append(
+            (
+                virtual_key,
+                flags,
+            )
+        )
+
+    monkeypatch.setattr(
+        automation.win32api,
+        "keybd_event",
+        record_event,
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    automation.send_ctrl_virtual_key(
+        ord("S")
+    )
+
+    assert events == [
+        (
+            automation.win32con.VK_CONTROL,
+            0,
+        ),
+        (
+            ord("S"),
+            0,
+        ),
+        (
+            ord("S"),
+            automation.win32con.KEYEVENTF_KEYUP,
+        ),
+        (
+            automation.win32con.VK_CONTROL,
+            automation.win32con.KEYEVENTF_KEYUP,
+        ),
+    ]
+
+
+def test_send_save_command_uses_vk_s_without_type_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[object] = []
+
+    class FakeWindow:
+        def set_focus(self) -> None:
+            events.append("set_focus")
+
+        def type_keys(self, *_: object, **__: object) -> None:
+            pytest.fail(
+                "Ctrl+S не должен отправляться через type_keys"
+            )
+
+    monkeypatch.setattr(
+        automation,
+        "focus_window",
+        lambda hwnd: events.append(
+            (
+                "focus",
+                hwnd,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        automation,
+        "send_ctrl_virtual_key",
+        lambda vk_code: events.append(
+            (
+                "hotkey",
+                vk_code,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    automation.send_save_command(
+        FakeWindow(),
+        123,
+    )
+
+    assert events == [
+        (
+            "focus",
+            123,
+        ),
+        "set_focus",
+        (
+            "hotkey",
+            ord("S"),
+        ),
+    ]
+
+
+def configure_save_dialog_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    texts_by_hwnd: dict[int, list[str]],
+    classes_by_hwnd: dict[int, str] | None = None,
+) -> None:
+    classes = classes_by_hwnd or {}
+
+    def enum_windows(callback, data) -> None:
+        for hwnd in texts_by_hwnd:
+            callback(hwnd, data)
+
+    monkeypatch.setattr(
+        automation.win32gui,
+        "EnumWindows",
+        enum_windows,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindowVisible",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation,
+        "is_es_process_window",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetClassName",
+        lambda hwnd: classes.get(
+            hwnd,
+            "#32770",
+        ),
+    )
+    monkeypatch.setattr(
+        automation,
+        "get_window_texts",
+        lambda hwnd: texts_by_hwnd[hwnd],
+    )
+
+
+def test_find_russian_save_changes_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    texts = [
+        "EmbroideryStudio",
+        "Сохранить изменения в design.EMB?",
+        "Да",
+        "Нет",
+        "Отмена",
+    ]
+    configure_save_dialog_windows(
+        monkeypatch,
+        {100: texts},
+    )
+
+    assert automation.find_save_changes_dialog() == (
+        100,
+        texts,
+    )
+
+
+def test_find_save_dialog_prefers_requested_document_stem(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other_texts = [
+        "Сохранить изменения в Other.EMB?",
+        "Да",
+        "Нет",
+    ]
+    target_texts = [
+        "Сохранить изменения в Pumpkin_e3.EMB?",
+        "Да",
+        "Нет",
+    ]
+    configure_save_dialog_windows(
+        monkeypatch,
+        {
+            100: other_texts,
+            200: target_texts,
+        },
+    )
+
+    assert automation.find_save_changes_dialog(
+        "pumpkin_E3"
+    ) == (
+        200,
+        target_texts,
+    )
+
+
+def test_find_save_dialog_ignores_unrelated_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_save_dialog_windows(
+        monkeypatch,
+        {
+            100: [
+                "Невозможно открыть дизайн",
+                "Данная версия не может открыть этот дизайн",
+                "OK",
+            ]
+        },
+    )
+
+    assert (
+        automation.find_save_changes_dialog()
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("save", "button_id"),
+    [
+        (
+            True,
+            lambda: automation.win32con.IDYES,
+        ),
+        (
+            False,
+            lambda: automation.win32con.IDNO,
+        ),
+    ],
+)
+def test_dismiss_save_dialog_uses_standard_button_id(
+    save: bool,
+    button_id,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: list[tuple[int, int]] = []
+
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: (
+            100,
+            ["Сохранить изменения в design.EMB?"],
+        ),
+    )
+
+    def get_dialog_item(
+        hwnd: int,
+        requested_id: int,
+    ) -> int:
+        assert hwnd == 100
+        assert requested_id == button_id()
+        return 200
+
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetDlgItem",
+        get_dialog_item,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "PostMessage",
+        lambda hwnd, message, _wparam, _lparam: (
+            posted.append(
+                (
+                    hwnd,
+                    message,
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: False,
+    )
+
+    assert automation.dismiss_save_changes_dialog(
+        "design",
+        save=save,
+    )
+    assert posted == [
+        (
+            200,
+            automation.win32con.BM_CLICK,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("save", "target_text"),
+    [
+        (True, "&Да"),
+        (False, "&Нет"),
+    ],
+)
+def test_dismiss_save_dialog_falls_back_to_button_text(
+    save: bool,
+    target_text: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: list[int] = []
+    button_texts = {
+        301: "Отмена",
+        302: target_text,
+    }
+
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: (
+            100,
+            ["Сохранить изменения в design.EMB?"],
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetDlgItem",
+        lambda *_: 0,
+    )
+
+    def enum_children(hwnd: int, callback, data) -> None:
+        assert hwnd == 100
+
+        for child_hwnd in button_texts:
+            callback(child_hwnd, data)
+
+    monkeypatch.setattr(
+        automation.win32gui,
+        "EnumChildWindows",
+        enum_children,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetClassName",
+        lambda _: "Button",
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda hwnd: button_texts[hwnd],
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "PostMessage",
+        lambda hwnd, *_: posted.append(hwnd),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: False,
+    )
+
+    assert automation.dismiss_save_changes_dialog(
+        "design",
+        save=save,
+    )
+    assert posted == [302]
+
+
+def test_dismiss_save_dialog_never_clicks_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    posted: list[int] = []
+
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: (
+            100,
+            ["Сохранить изменения в design.EMB?"],
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetDlgItem",
+        lambda *_: 0,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "EnumChildWindows",
+        lambda _hwnd, callback, data: callback(
+            301,
+            data,
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetClassName",
+        lambda _: "Button",
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: "Отмена",
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "PostMessage",
+        lambda hwnd, *_: posted.append(hwnd),
+    )
+
+    assert not automation.dismiss_save_changes_dialog(
+        "design",
+        save=True,
+    )
+    assert posted == []
+
+
+def test_close_document_clicks_yes_and_waits_for_title_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles = iter(
+        [
+            "Wilcom - [design]",
+            "Wilcom - No Design",
+        ]
+    )
+    dismiss_calls: list[tuple[str | None, bool]] = []
+    dialogs = iter(
+        [
+            (
+                500,
+                ["Сохранить изменения в design.EMB?"],
+            ),
+            None,
+        ]
+    )
+
+    class FakeWindow:
+        def set_focus(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        automation,
+        "focus_window",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "send_ctrl_virtual_key",
+        lambda vk: (
+            vk == automation.win32con.VK_F4
+            or pytest.fail("Ожидался VK_F4")
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: next(titles),
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: next(dialogs),
+    )
+    monkeypatch.setattr(
+        automation,
+        "dismiss_save_changes_dialog",
+        lambda document_stem, save, timeout: (
+            dismiss_calls.append(
+                (
+                    document_stem,
+                    save,
+                )
+            )
+            or True
+        ),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    result = automation.close_document_and_wait(
+        FakeWindow(),
+        123,
+        "design",
+        save=True,
+    )
+
+    assert result == "Wilcom - No Design"
+    assert dismiss_calls == [
+        (
+            "design",
+            True,
+        )
+    ]
+
+
+def test_close_document_best_effort_clicks_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    titles = iter(
+        [
+            "Wilcom - [design]",
+            "Wilcom - [design]",
+            "Wilcom - No Design",
+        ]
+    )
+    dismiss_values: list[bool] = []
+    dialogs = iter(
+        [
+            (
+                500,
+                ["Сохранить изменения в design.EMB?"],
+            ),
+            (
+                500,
+                ["Сохранить изменения в design.EMB?"],
+            ),
+            None,
+        ]
+    )
+
+    class FakeWindow:
+        def set_focus(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: next(titles),
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: next(dialogs),
+    )
+    monkeypatch.setattr(
+        automation,
+        "focus_window",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "send_ctrl_virtual_key",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "dismiss_save_changes_dialog",
+        lambda _stem, save, timeout: (
+            dismiss_values.append(save)
+            or True
+        ),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    automation.close_document_best_effort(
+        123,
+        "design",
+        window=FakeWindow(),
+    )
+
+    assert dismiss_values == [False]
+
+
+def test_wait_for_document_open_discards_blocking_save_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dismiss_calls: list[tuple[str | None, bool, float]] = []
+
+    monkeypatch.setattr(
+        automation,
+        "raise_for_known_open_error_dialog",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: (
+            500,
+            [
+                "Сохранить изменения в "
+                "old.__processing_123.EMB?",
+                "Да",
+                "Нет",
+                "Отмена",
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        automation,
+        "dismiss_save_changes_dialog",
+        lambda document_stem, save, timeout: (
+            dismiss_calls.append(
+                (
+                    document_stem,
+                    save,
+                    timeout,
+                )
+            )
+            or True
+        ),
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: pytest.fail(
+            "Title не должен проверяться при блокирующем диалоге"
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="заблокировано диалогом сохранения.*"
+        "Диалог закрыт без сохранения",
+    ):
+        automation.wait_for_document_open(
+            123,
+            Path("new.EMB"),
+        )
+
+    assert dismiss_calls == [
+        (
+            None,
+            False,
+            3.0,
+        )
+    ]
+
+
+def test_close_document_timeout_contains_dialog_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    times = iter(
+        [
+            0.0,
+            0.0,
+            0.0,
+            21.0,
+        ]
+    )
+
+    class FakeWindow:
+        def set_focus(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        automation,
+        "focus_window",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation,
+        "send_ctrl_virtual_key",
+        lambda _: None,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "IsWindow",
+        lambda _: True,
+    )
+    monkeypatch.setattr(
+        automation.win32gui,
+        "GetWindowText",
+        lambda _: "Wilcom - [design]",
+    )
+    monkeypatch.setattr(
+        automation,
+        "find_save_changes_dialog",
+        lambda *_: (
+            500,
+            [
+                "EmbroideryStudio",
+                "Сохранить изменения в design.EMB?",
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        automation,
+        "dismiss_save_changes_dialog",
+        lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "time",
+        lambda: next(times),
+    )
+    monkeypatch.setattr(
+        automation.time,
+        "sleep",
+        lambda _: None,
+    )
+
+    with pytest.raises(TimeoutError) as captured:
+        automation.close_document_and_wait(
+            FakeWindow(),
+            123,
+            "design",
+            timeout=20.0,
+        )
+
+    message = str(captured.value)
+    assert "Фактический заголовок: Wilcom - [design]" in message
+    assert "Диалог сохранения найден: да" in message
+    assert "Сохранить изменения в design.EMB?" in message
