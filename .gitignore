@@ -1,7 +1,8 @@
 # Python
-__pycache__/
+**/__pycache__/
 *.py[cod]
 *.pyo
+.pytest_cache/
 
 # Virtual environment
 .venv/
@@ -9,10 +10,13 @@ venv/
 
 # IDE
 .idea/
+.idea/workspace.xml
+.idea/shelf/
 .vscode/
 
 # Logs
 logs/
+logs/*.txt
 *.log
 
 # Dataset (не грузим исходники)
