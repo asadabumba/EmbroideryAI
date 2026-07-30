@@ -12,6 +12,8 @@ from pywinauto import Desktop, mouse
 
 X_AUTOMATION_ID = "6586"
 Y_AUTOMATION_ID = "6587"
+OPEN_DESIGN_ERROR_TITLE = "Невозможно открыть дизайн"
+PREFERRED_WINDOW_TITLE = "Ultimate Special Edition"
 
 DEFAULT_ES_EXE = Path(
     r"D:\AAAAAAAAAAA\EmbroideryStudio_e4.2\BIN\ES.EXE"
@@ -57,21 +59,72 @@ def find_es_exe(explicit_path: Path | None) -> Path:
     )
 
 
+def is_es_main_window_candidate(
+    title: str,
+    class_name: str,
+    width: int,
+    height: int,
+    visible: bool = True,
+) -> bool:
+    """Фильтрует технические и модальные окна ES.EXE."""
+
+    title = title.strip()
+
+    if not visible:
+        return False
+
+    if width < 300 or height < 300:
+        return False
+
+    if not title:
+        return False
+
+    if title == "XTPFrameShadow":
+        return False
+
+    if class_name in {
+        "XTPFrameShadow",
+        "#32770",
+    }:
+        return False
+
+    return True
+
+
+def es_main_window_sort_key(
+    title: str,
+    area: int,
+) -> tuple[int, int]:
+    """Отдаёт приоритет известному заголовку главного окна."""
+
+    preferred = (
+        PREFERRED_WINDOW_TITLE.casefold()
+        in title.casefold()
+    )
+
+    return int(preferred), area
+
+
 def list_es_main_windows() -> list[
-    tuple[int, int, int, str]
+    tuple[int, int, int, int, str, str]
 ]:
     """
     Возвращает все крупные видимые окна ES.EXE:
 
-    area, hwnd, pid, title
+    preferred, area, hwnd, pid, title, class_name
     """
 
     results: list[
-        tuple[int, int, int, str]
+        tuple[int, int, int, int, str, str]
     ] = []
 
     def callback(hwnd: int, _) -> None:
-        if not win32gui.IsWindowVisible(hwnd):
+        visible = win32gui.IsWindowVisible(hwnd)
+
+        try:
+            title = win32gui.GetWindowText(hwnd)
+            class_name = win32gui.GetClassName(hwnd)
+        except Exception:
             return
 
         _, pid = win32process.GetWindowThreadProcessId(
@@ -100,15 +153,29 @@ def list_es_main_windows() -> list[
         width = right - left
         height = bottom - top
 
-        if width < 300 or height < 300:
+        if not is_es_main_window_candidate(
+            title=title,
+            class_name=class_name,
+            width=width,
+            height=height,
+            visible=visible,
+        ):
             return
+
+        area = width * height
+        preferred, _ = es_main_window_sort_key(
+            title,
+            area,
+        )
 
         results.append(
             (
-                width * height,
+                preferred,
+                area,
                 hwnd,
                 pid,
-                win32gui.GetWindowText(hwnd),
+                title,
+                class_name,
             )
         )
 
@@ -120,6 +187,238 @@ def list_es_main_windows() -> list[
     results.sort(reverse=True)
 
     return results
+
+
+def get_window_texts(hwnd: int) -> list[str]:
+    """Собирает заголовок и доступные тексты дочерних окон."""
+
+    texts: list[str] = []
+
+    def add_text(window_hwnd: int) -> None:
+        try:
+            text = win32gui.GetWindowText(
+                window_hwnd
+            ).strip()
+        except Exception:
+            return
+
+        if text and text not in texts:
+            texts.append(text)
+
+    add_text(hwnd)
+
+    def callback(child_hwnd: int, _) -> None:
+        add_text(child_hwnd)
+
+    try:
+        win32gui.EnumChildWindows(
+            hwnd,
+            callback,
+            None,
+        )
+    except Exception:
+        pass
+
+    return texts
+
+
+def find_known_open_error_dialog(
+) -> tuple[int, list[str]] | None:
+    """Находит известный диалог ошибки открытия Wilcom."""
+
+    matches: list[tuple[int, list[str]]] = []
+
+    def callback(hwnd: int, _) -> None:
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+
+        try:
+            title = win32gui.GetWindowText(
+                hwnd
+            ).strip()
+        except Exception:
+            return
+
+        if title != OPEN_DESIGN_ERROR_TITLE:
+            return
+
+        matches.append(
+            (
+                hwnd,
+                get_window_texts(hwnd),
+            )
+        )
+
+    win32gui.EnumWindows(
+        callback,
+        None,
+    )
+
+    if not matches:
+        return None
+
+    return matches[0]
+
+
+def describe_open_design_error(
+    texts: list[str],
+) -> str:
+    """Формирует короткое понятное описание ошибки Wilcom."""
+
+    combined = " ".join(texts).casefold()
+
+    if (
+        "был создан в более поздней версии программы"
+        in combined
+        or "данная версия не может открыть этот дизайн"
+        in combined
+    ):
+        return (
+            "Wilcom не смог открыть файл: дизайн создан "
+            "в более поздней версии программы."
+        )
+
+    details = [
+        text.strip()
+        for text in texts
+        if (
+            text.strip()
+            and text.strip() != OPEN_DESIGN_ERROR_TITLE
+            and text.strip().casefold() not in {"ok", "ок"}
+        )
+    ]
+
+    if details:
+        detail = " ".join(details).rstrip(" .")
+        return f"Wilcom не смог открыть файл: {detail}."
+
+    return (
+        "Wilcom не смог открыть файл: "
+        "Невозможно открыть дизайн."
+    )
+
+
+def dismiss_known_open_error_dialog(
+    timeout: float = 3.0,
+) -> str | None:
+    """
+    Закрывает известный диалог через OK или Enter.
+
+    Возвращает описание найденной ошибки.
+    """
+
+    match = find_known_open_error_dialog()
+
+    if match is None:
+        return None
+
+    hwnd, texts = match
+    description = describe_open_design_error(
+        texts
+    )
+    button_hwnd = 0
+
+    try:
+        button_hwnd = win32gui.GetDlgItem(
+            hwnd,
+            win32con.IDOK,
+        )
+    except Exception:
+        pass
+
+    if not button_hwnd:
+        buttons: list[int] = []
+
+        def callback(child_hwnd: int, _) -> None:
+            try:
+                class_name = win32gui.GetClassName(
+                    child_hwnd
+                )
+                text = (
+                    win32gui.GetWindowText(child_hwnd)
+                    .replace("&", "")
+                    .strip()
+                    .casefold()
+                )
+            except Exception:
+                return
+
+            if (
+                class_name == "Button"
+                and text in {"ok", "ок"}
+            ):
+                buttons.append(child_hwnd)
+
+        try:
+            win32gui.EnumChildWindows(
+                hwnd,
+                callback,
+                None,
+            )
+        except Exception:
+            pass
+
+        if buttons:
+            button_hwnd = buttons[0]
+
+    if button_hwnd:
+        try:
+            win32gui.PostMessage(
+                button_hwnd,
+                win32con.BM_CLICK,
+                0,
+                0,
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            win32gui.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+        try:
+            win32gui.PostMessage(
+                hwnd,
+                win32con.WM_KEYDOWN,
+                win32con.VK_RETURN,
+                0,
+            )
+            win32gui.PostMessage(
+                hwnd,
+                win32con.WM_KEYUP,
+                win32con.VK_RETURN,
+                0,
+            )
+        except Exception:
+            pass
+
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            closed = (
+                not win32gui.IsWindow(hwnd)
+                or not win32gui.IsWindowVisible(hwnd)
+            )
+        except Exception:
+            closed = True
+
+        if closed:
+            break
+
+        time.sleep(0.05)
+
+    return description
+
+
+def raise_for_known_open_error_dialog() -> None:
+    """Немедленно превращает известный диалог в RuntimeError."""
+
+    description = dismiss_known_open_error_dialog()
+
+    if description is not None:
+        raise RuntimeError(description)
 
 
 def wait_for_es_main_window(
@@ -136,16 +435,26 @@ def wait_for_es_main_window(
     deadline = time.time() + timeout
 
     while time.time() < deadline:
+        raise_for_known_open_error_dialog()
+
         windows = list_es_main_windows()
 
         if windows:
-            _, hwnd, pid, title = windows[0]
+            (
+                _,
+                _,
+                hwnd,
+                pid,
+                title,
+                class_name,
+            ) = windows[0]
 
             print()
             print("Найдено окно Wilcom:")
             print("HWND:", hwnd)
             print("PID:", pid)
             print("TITLE:", repr(title))
+            print("CLASS:", repr(class_name))
 
             return hwnd
 
@@ -550,6 +859,8 @@ def wait_for_selected_design(
     last_error: Exception | None = None
 
     while time.time() < deadline:
+        raise_for_known_open_error_dialog()
+
         try:
             focus_window(main_hwnd)
             window.set_focus()
@@ -576,6 +887,7 @@ def wait_for_selected_design(
 
         except Exception as error:
             last_error = error
+            raise_for_known_open_error_dialog()
             time.sleep(0.7)
 
     raise RuntimeError(
@@ -685,6 +997,194 @@ def verify_value(
         )
 
 
+def process_emb_file(
+    file_path: Path,
+    x: str,
+    y: str,
+    es_path: Path | None = None,
+    close: bool = True,
+) -> dict[str, str]:
+    """Обрабатывает один EMB-файл в Wilcom."""
+
+    file_path = file_path.resolve()
+
+    if not file_path.exists():
+        raise FileNotFoundError(
+            f"Файл не найден: {file_path}"
+        )
+
+    es_exe = find_es_exe(
+        es_path
+    )
+
+    print("Wilcom:")
+    print(es_exe)
+
+    print()
+    print("Открываю:")
+    print(file_path)
+
+    print()
+    print("Открываю файл через Windows:")
+    print(file_path)
+
+    os.startfile(
+        str(file_path)
+    )
+
+    raise_for_known_open_error_dialog()
+
+    # Wilcom может открыть файл в уже запущенном
+    # процессе или запустить новый процесс.
+    hwnd = wait_for_es_main_window(
+        timeout=60.0,
+    )
+
+    raise_for_known_open_error_dialog()
+
+    time.sleep(3.0)
+
+    raise_for_known_open_error_dialog()
+
+    print()
+    print("Использую окно Wilcom:")
+    print("HWND:", hwnd)
+    print(
+        "TITLE:",
+        repr(win32gui.GetWindowText(hwnd)),
+    )
+
+    # После загрузки создаём свежую обёртку окна.
+    window = Desktop(
+        backend="uia"
+    ).window(
+        handle=hwnd
+    )
+
+    focus_window(hwnd)
+    raise_for_known_open_error_dialog()
+
+    try:
+        window.set_focus()
+    except Exception:
+        raise_for_known_open_error_dialog()
+        raise
+
+    print()
+    print("Жду загрузки и выделяю дизайн...")
+
+    x_pane, x_edit, y_pane, y_edit = (
+        wait_for_selected_design(
+            window,
+            hwnd,
+            timeout=60.0,
+        )
+    )
+
+    old_x = read_value(
+        x_pane,
+        x_edit,
+    )
+
+    old_y = read_value(
+        y_pane,
+        y_edit,
+    )
+
+    print()
+    print("До изменения:")
+    print("X:", old_x)
+    print("Y:", old_y)
+
+    set_value(
+        x_edit,
+        x,
+    )
+
+    (
+        x_pane,
+        x_edit,
+        y_pane,
+        y_edit,
+    ) = wait_for_enabled_controls(window)
+
+    set_value(
+        y_edit,
+        y,
+    )
+
+    (
+        x_pane,
+        x_edit,
+        y_pane,
+        y_edit,
+    ) = wait_for_enabled_controls(window)
+
+    new_x = read_value(
+        x_pane,
+        x_edit,
+    )
+
+    new_y = read_value(
+        y_pane,
+        y_edit,
+    )
+
+    verify_value(
+        "X",
+        new_x,
+        x,
+    )
+
+    verify_value(
+        "Y",
+        new_y,
+        y,
+    )
+
+    print()
+    print("После изменения:")
+    print("X:", new_x)
+    print("Y:", new_y)
+
+    print()
+    print("Сохраняю...")
+
+    focus_window(hwnd)
+    window.set_focus()
+
+    window.type_keys(
+        "^s",
+        set_foreground=True,
+    )
+
+    time.sleep(4.0)
+
+    print("Файл сохранён.")
+
+    if close:
+        focus_window(hwnd)
+        window.set_focus()
+
+        window.type_keys(
+            "^{F4}",
+            set_foreground=True,
+        )
+
+        time.sleep(2.0)
+
+        print("Документ закрыт.")
+
+    return {
+        "file": str(file_path),
+        "old_x": old_x,
+        "old_y": old_y,
+        "new_x": new_x,
+        "new_y": new_y,
+        "status": "success",
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
 
@@ -720,162 +1220,13 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    file_path = args.file.resolve()
-
-    if not file_path.exists():
-        raise FileNotFoundError(
-            f"Файл не найден: {file_path}"
-        )
-
-    es_exe = find_es_exe(
-        args.es
+    process_emb_file(
+        file_path=args.file,
+        x=args.x,
+        y=args.y,
+        es_path=args.es,
+        close=args.close,
     )
-
-    print("Wilcom:")
-    print(es_exe)
-
-    print()
-    print("Открываю:")
-    print(file_path)
-
-    print()
-    print("Открываю файл через Windows:")
-    print(file_path)
-
-    os.startfile(
-        str(file_path)
-    )
-
-    # Wilcom может открыть файл в уже запущенном
-    # процессе или запустить новый процесс.
-    hwnd = wait_for_es_main_window(
-        timeout=60.0,
-    )
-
-    time.sleep(3.0)
-
-    print()
-    print("Использую окно Wilcom:")
-    print("HWND:", hwnd)
-    print(
-        "TITLE:",
-        repr(win32gui.GetWindowText(hwnd)),
-    )
-
-    # После загрузки создаём свежую обёртку окна.
-    window = Desktop(
-        backend="uia"
-    ).window(
-        handle=hwnd
-    )
-
-    focus_window(hwnd)
-    window.set_focus()
-
-    print()
-    print("Жду загрузки и выделяю дизайн...")
-
-    x_pane, x_edit, y_pane, y_edit = (
-        wait_for_selected_design(
-            window,
-            hwnd,
-            timeout=60.0,
-        )
-    )
-
-    old_x = read_value(
-        x_pane,
-        x_edit,
-    )
-
-    old_y = read_value(
-        y_pane,
-        y_edit,
-    )
-
-    print()
-    print("До изменения:")
-    print("X:", old_x)
-    print("Y:", old_y)
-
-    set_value(
-        x_edit,
-        args.x,
-    )
-
-    (
-        x_pane,
-        x_edit,
-        y_pane,
-        y_edit,
-    ) = wait_for_enabled_controls(window)
-
-    set_value(
-        y_edit,
-        args.y,
-    )
-
-    (
-        x_pane,
-        x_edit,
-        y_pane,
-        y_edit,
-    ) = wait_for_enabled_controls(window)
-
-    new_x = read_value(
-        x_pane,
-        x_edit,
-    )
-
-    new_y = read_value(
-        y_pane,
-        y_edit,
-    )
-
-    verify_value(
-        "X",
-        new_x,
-        args.x,
-    )
-
-    verify_value(
-        "Y",
-        new_y,
-        args.y,
-    )
-
-    print()
-    print("После изменения:")
-    print("X:", new_x)
-    print("Y:", new_y)
-
-    print()
-    print("Сохраняю...")
-
-    focus_window(hwnd)
-    window.set_focus()
-
-    window.type_keys(
-        "^s",
-        set_foreground=True,
-    )
-
-    time.sleep(4.0)
-
-    print("Файл сохранён.")
-
-    if args.close:
-        focus_window(hwnd)
-        window.set_focus()
-
-        window.type_keys(
-            "^{F4}",
-            set_foreground=True,
-        )
-
-        time.sleep(2.0)
-
-        print("Документ закрыт.")
 
 
 if __name__ == "__main__":
