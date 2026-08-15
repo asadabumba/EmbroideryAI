@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from src.ml_dataset.canonicalize import (
     canonicalize_design,
     deterministic_design_id,
     deterministic_source_design_id,
 )
-from src.ml_dataset.serialization import read_record, write_record
+from src.ml_dataset.serialization import read_json, read_jsonl, read_record, write_record
 
 
 def _commands(x_offset: int = 0, y_offset: int = 0) -> list[dict[str, object]]:
@@ -70,3 +72,22 @@ def test_serialization_round_trip(tmp_path: Path) -> None:
     expected = _record()
     write_record(path, expected)
     assert read_record(path).to_dict() == expected.to_dict()
+
+
+def test_serialization_rejects_non_finite_numbers(tmp_path: Path) -> None:
+    record = _record()
+    record.geometry["width"] = float("nan")
+    with pytest.raises(ValueError, match="Out of range float"):
+        write_record(tmp_path / "invalid.json", record)
+
+
+def test_deserialization_rejects_non_standard_numeric_constants(tmp_path: Path) -> None:
+    json_path = tmp_path / "invalid.json"
+    jsonl_path = tmp_path / "invalid.jsonl"
+    json_path.write_text('{"value": NaN}', encoding="utf-8")
+    jsonl_path.write_text('{"value": Infinity}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="non-standard JSON numeric constant: NaN"):
+        read_json(json_path)
+    with pytest.raises(ValueError, match="non-standard JSON numeric constant: Infinity"):
+        read_jsonl(jsonl_path)

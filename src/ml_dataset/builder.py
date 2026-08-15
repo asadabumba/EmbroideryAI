@@ -9,12 +9,20 @@ from typing import Any
 
 from .adapters import SUPPORTED_SUFFIXES, parse_source
 from .canonicalize import canonicalize_design, sha256_file
-from .lineage import LineageIndex, PairMetadataIndex
+from .lineage import LineageIndex, PairMetadataIndex, path_keys_match
 from .rendering import render_preview
 from .schema import SCHEMA_VERSION, DesignRecord
 from .serialization import read_record, write_json, write_jsonl, write_record
-from .splitting import assign_grouped_splits, records_by_split, split_statistics
-from .validation import validate_dataset, write_validation_report
+from .splitting import (
+    assign_grouped_splits,
+    records_by_split,
+    split_statistics,
+    validate_split_ratios,
+)
+from .validation import validate_dataset, validate_record, write_validation_report
+
+
+BUILD_PIPELINE_VERSION = "1.2.0"
 
 
 @dataclass(frozen=True)
@@ -47,6 +55,23 @@ class DatasetBuilder:
         self.config = config
         self.input_dir = config.input_dir.resolve()
         self.output_dir = config.output_dir.resolve()
+        if self.input_dir == self.output_dir or self.input_dir.is_relative_to(
+            self.output_dir
+        ):
+            raise ValueError(
+                "output directory cannot be the input directory or one of its parents"
+            )
+        if config.preview_width < 17 or config.preview_height < 17:
+            raise ValueError(
+                "preview dimensions must be at least 17x17 for the default padding"
+            )
+        validate_split_ratios(
+            {
+                "train": config.train_ratio,
+                "validation": config.validation_ratio,
+                "test": config.test_ratio,
+            }
+        )
         self.lineage = (
             LineageIndex.from_csv(config.lineage_csv)
             if config.lineage_csv is not None
@@ -75,6 +100,7 @@ class DatasetBuilder:
         value = json.dumps(
             {
                 "schema": SCHEMA_VERSION,
+                "pipeline": BUILD_PIPELINE_VERSION,
                 "lineage": lineage,
                 "pair": pair_metadata,
                 "renderer": "ml_dataset.raster_v1",
@@ -84,12 +110,37 @@ class DatasetBuilder:
             sort_keys=True,
             ensure_ascii=False,
             separators=(",", ":"),
+            allow_nan=False,
         )
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
-    def _record_path(self, relative_path: str, design_id: str) -> Path:
-        path_key = hashlib.sha256(relative_path.casefold().encode("utf-8")).hexdigest()[:12]
-        return self.output_dir / "records" / f"{path_key}__{design_id}.json"
+    @staticmethod
+    def _source_artifact_key(relative_path: str) -> str:
+        return hashlib.sha256(relative_path.casefold().encode("utf-8")).hexdigest()
+
+    def _record_path(self, relative_path: str) -> Path:
+        return (
+            self.output_dir
+            / "records"
+            / f"{self._source_artifact_key(relative_path)}.json"
+        )
+
+    @staticmethod
+    def _resolve_source_reference(
+        source_reference: str, discovered_paths: list[str]
+    ) -> str:
+        matches = [
+            candidate
+            for candidate in discovered_paths
+            if path_keys_match(source_reference, candidate)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise ValueError(
+                f"original source reference is ambiguous: {source_reference}"
+            )
+        return source_reference
 
     def _load_cached(
         self,
@@ -104,16 +155,34 @@ class DatasetBuilder:
             record = read_record(record_path)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
-        if (
-            record.source_path == relative_path
+        cache_matches = (
+            record.identity.get("source_path") == relative_path
             and record.identity.get("content_sha256") == content_hash
             and record.source_metadata.get("build_fingerprint") == fingerprint
-        ):
-            return record
-        return None
+            and not any(
+                issue.severity == "error" for issue in validate_record(record)
+            )
+        )
+        if not cache_matches:
+            return None
+        if record.geometry.get("absolute_stitch_coordinates"):
+            expected_preview = (
+                f"previews/{self._source_artifact_key(relative_path)}.png"
+            )
+            if (
+                record.rendering.get("preview_path") != expected_preview
+                or record.rendering.get("width_px") != self.config.preview_width
+                or record.rendering.get("height_px") != self.config.preview_height
+                or record.rendering.get("renderer") != "ml_dataset.raster_v1"
+            ):
+                return None
+        return record
 
     def build(self) -> BuildResult:
         files = self.discover()
+        discovered_paths = [
+            path.relative_to(self.input_dir).as_posix() for path in files
+        ]
         self.output_dir.mkdir(parents=True, exist_ok=True)
         records: list[DesignRecord] = []
         failures: list[dict[str, str]] = []
@@ -128,6 +197,16 @@ class DatasetBuilder:
                 pair_metadata = self.pairs.lookup(relative_path)
                 source_design_key = lineage.source_design_key
                 augmentation = lineage.as_augmentation()
+                if lineage.relation == "translated_variant":
+                    resolved_source = self._resolve_source_reference(
+                        source_design_key, discovered_paths
+                    )
+                    if resolved_source != source_design_key:
+                        augmentation["metadata"][
+                            "reported_original_source_path"
+                        ] = augmentation["original_source_path"]
+                        augmentation["original_source_path"] = resolved_source
+                        source_design_key = resolved_source
                 if pair_metadata is not None and lineage.relation == "original":
                     normalized_name = pair_metadata.get("normalized_name")
                     if isinstance(normalized_name, str) and normalized_name:
@@ -137,12 +216,7 @@ class DatasetBuilder:
                             pair_metadata.get("emb_file") or relative_path
                         ).replace("\\", "/")
                 fingerprint = self._fingerprint(augmentation, pair_metadata)
-                provisional_id = canonicalize_design(
-                    source_path=relative_path,
-                    source_format=path.suffix.lstrip("."),
-                    content_sha256=content_hash,
-                ).design_id
-                record_path = self._record_path(relative_path, provisional_id)
+                record_path = self._record_path(relative_path)
                 record = self._load_cached(record_path, relative_path, content_hash, fingerprint)
                 if record is None:
                     parsed = parse_source(path)
@@ -159,8 +233,13 @@ class DatasetBuilder:
                         diagnostics=parsed.diagnostics,
                     )
                     record.source_metadata["build_fingerprint"] = fingerprint
+                    record.source_metadata[
+                        "build_pipeline_version"
+                    ] = BUILD_PIPELINE_VERSION
                     if record.geometry["absolute_stitch_coordinates"]:
-                        preview_relative = f"previews/{record.design_id}.png"
+                        preview_relative = (
+                            f"previews/{self._source_artifact_key(relative_path)}.png"
+                        )
                         render_preview(
                             record,
                             self.output_dir / preview_relative,
@@ -225,6 +304,7 @@ class DatasetBuilder:
             self.output_dir / "manifest.json",
             {
                 "schema_version": SCHEMA_VERSION,
+                "build_pipeline_version": BUILD_PIPELINE_VERSION,
                 "record_count": len(records),
                 "failed_count": len(failures),
                 "manifest": "manifest.jsonl",
@@ -237,7 +317,12 @@ class DatasetBuilder:
                 },
             },
         )
-        report = validate_dataset(records, input_root=self.input_dir, splits=splits)
+        report = validate_dataset(
+            records,
+            input_root=self.input_dir,
+            output_root=self.output_dir,
+            splits=splits,
+        )
         write_validation_report(self.output_dir, report)
         write_json(
             self.output_dir / "build_report.json",
@@ -271,6 +356,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--pair-metadata", type=Path)
     parser.add_argument("--preview-width", type=int, default=256)
     parser.add_argument("--preview-height", type=int, default=256)
+    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--validation-ratio", type=float, default=0.1)
+    parser.add_argument("--test-ratio", type=float, default=0.1)
     return parser
 
 
@@ -285,6 +373,9 @@ def main() -> int:
             pair_metadata=args.pair_metadata,
             preview_width=args.preview_width,
             preview_height=args.preview_height,
+            train_ratio=args.train_ratio,
+            validation_ratio=args.validation_ratio,
+            test_ratio=args.test_ratio,
         )
     ).build()
     print(json.dumps({**result.__dict__, "output_dir": str(result.output_dir)}, indent=2))

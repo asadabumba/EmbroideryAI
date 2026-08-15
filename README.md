@@ -114,10 +114,11 @@ The Stage 2 builder supports `.DST` trajectories and metadata-only `.EMB` record
 ```powershell
 python -m src.ml_dataset.builder dataset/raw dataset/stage2 `
   --lineage-csv path/to/batch_results.csv `
-  --pair-metadata dataset/paired/strict_pairs.json
+  --pair-metadata dataset/paired/strict_pairs.json `
+  --train-ratio 0.8 --validation-ratio 0.1 --test-ratio 0.1
 ```
 
-Both optional metadata arguments may be omitted. Outputs use inspectable JSON/JSONL plus PNG previews. See [the Stage 2 data model](docs/stage2_data_model.md), [real-data request](REAL_DATA_NEEDED.md), and [image-to-embroidery roadmap](docs/image_to_embroidery_plan.md).
+The metadata and ratio arguments may be omitted; the split defaults are 80/10/10. Outputs use inspectable strict JSON/JSONL plus PNG previews. See [the Stage 2 data model](docs/stage2_data_model.md), [real-data request](REAL_DATA_NEEDED.md), and [image-to-embroidery roadmap](docs/image_to_embroidery_plan.md).
 
 Lightweight deterministic trajectory checks can be run after a manifest exists:
 

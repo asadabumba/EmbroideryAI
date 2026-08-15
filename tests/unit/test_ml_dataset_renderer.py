@@ -37,3 +37,52 @@ def test_renderer_is_deterministic_and_headless(tmp_path: Path) -> None:
 def test_renderer_rejects_empty_path(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no renderable"):
         render_preview(_record(False), tmp_path / "empty.png")
+
+
+def test_renderer_normalizes_hidden_positioning_jump(tmp_path: Path) -> None:
+    def translated_record(offset: int):
+        return canonicalize_design(
+            source_path=f"translated-{offset}.dst",
+            source_format="dst",
+            content_sha256=f"{offset + 1:064x}",
+            commands=[
+                {
+                    "index": 0,
+                    "type": "jump",
+                    "dx": 10 + offset,
+                    "dy": 20 - offset,
+                    "x": 10 + offset,
+                    "y": 20 - offset,
+                },
+                {
+                    "index": 1,
+                    "type": "stitch",
+                    "dx": 5,
+                    "dy": 0,
+                    "x": 15 + offset,
+                    "y": 20 - offset,
+                },
+                {
+                    "index": 2,
+                    "type": "stitch",
+                    "dx": 0,
+                    "dy": 5,
+                    "x": 15 + offset,
+                    "y": 25 - offset,
+                },
+                {
+                    "index": 3,
+                    "type": "end",
+                    "dx": 0,
+                    "dy": 0,
+                    "x": 15 + offset,
+                    "y": 25 - offset,
+                },
+            ],
+        )
+
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    render_preview(translated_record(0), first, width=64, height=64)
+    render_preview(translated_record(100), second, width=64, height=64)
+    assert first.read_bytes() == second.read_bytes()

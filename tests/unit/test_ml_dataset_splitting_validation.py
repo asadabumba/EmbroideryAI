@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 from src.ml_dataset.canonicalize import canonicalize_design
 from src.ml_dataset.splitting import (
@@ -72,4 +73,61 @@ def test_validator_detects_invalid_coordinates_and_commands() -> None:
     report = validate_dataset([record])
     codes = {issue.code for issue in report.issues}
     assert "invalid_coordinate" in codes
+    assert "non_finite_value" in codes
     assert "unknown_command" in codes
+
+
+def test_validator_detects_corrupt_canonical_invariants() -> None:
+    record = _record("bad-invariants", "bad-invariants")
+    record.geometry["normalized_stitch_coordinates"] = [[2.0, 0.0]]
+    record.geometry["stitch_deltas"] = []
+    record.geometry["bounding_box"]["max_x"] = 99.0
+    record.stitch["stitch_count"] = 4
+    record.stitch["command_sequence"][-1]["index"] = 8
+    record.statistics["command_frequencies"] = {}
+
+    codes = {issue.code for issue in validate_dataset([record]).issues}
+    assert {
+        "invalid_normalized_coordinate",
+        "stitch_delta_mismatch",
+        "inconsistent_bounding_box",
+        "inconsistent_stitch_count",
+        "invalid_command_index",
+        "inconsistent_command_frequencies",
+    } <= codes
+
+
+def test_validator_detects_inconsistent_translation_grouping() -> None:
+    record = _record("variant", "family-a", relation="translated_variant")
+    record.augmentation["original_source_path"] = "family-b"
+    report = validate_dataset([record])
+    assert any(issue.code == "inconsistent_translation_lineage" for issue in report.issues)
+
+
+def test_validator_reports_missing_identity_without_crashing() -> None:
+    record = _record("missing-id", "missing-id")
+    del record.identity["design_id"]
+    del record.identity["source_path"]
+
+    report = validate_dataset([record])
+    assert not report.is_valid
+    assert any(issue.code == "corrupt_identity" for issue in report.issues)
+
+
+def test_validator_detects_missing_declared_preview(tmp_path: Path) -> None:
+    record = _record("missing-preview", "missing-preview")
+    record.rendering["preview_path"] = "previews/missing.png"
+    report = validate_dataset([record], output_root=tmp_path)
+    assert any(issue.code == "missing_preview_file" for issue in report.issues)
+
+
+def test_validator_detects_duplicate_and_missing_split_records() -> None:
+    first = _record("first", "first")
+    second = _record("second", "second")
+    report = validate_dataset(
+        [first, second],
+        splits={"train": [first, first], "validation": [], "test": []},
+    )
+    codes = {issue.code for issue in report.issues}
+    assert "duplicate_split_record" in codes
+    assert "missing_split_record" in codes

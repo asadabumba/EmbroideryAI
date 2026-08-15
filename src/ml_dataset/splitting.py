@@ -11,7 +11,7 @@ from .schema import DesignRecord
 SPLIT_NAMES = ("train", "validation", "test")
 
 
-def _validate_ratios(ratios: Mapping[str, float]) -> None:
+def validate_split_ratios(ratios: Mapping[str, float]) -> None:
     if set(ratios) != set(SPLIT_NAMES):
         raise ValueError(f"ratios must contain exactly: {', '.join(SPLIT_NAMES)}")
     if any(value < 0 for value in ratios.values()):
@@ -45,7 +45,7 @@ def assign_grouped_splits(
     ratios: Mapping[str, float] | None = None,
 ) -> dict[str, str]:
     selected_ratios = dict(ratios or {"train": 0.8, "validation": 0.1, "test": 0.1})
-    _validate_ratios(selected_ratios)
+    validate_split_ratios(selected_ratios)
     group_ids = sorted({record.source_design_id for record in records})
     ranked = sorted(
         group_ids,

@@ -76,17 +76,35 @@ def render_preview(
         raise ValueError("padding leaves no drawable area")
 
     events = record.stitch.get("command_sequence", [])
-    moving = [
-        event
-        for event in events
-        if event.get("type") in {"stitch", "jump", "sequin_eject"}
-        and isinstance(event.get("x"), (int, float))
-        and isinstance(event.get("y"), (int, float))
-    ]
-    if not moving:
+    segments: list[
+        tuple[tuple[float, float], tuple[float, float], tuple[int, int, int]]
+    ] = []
+    current = (0.0, 0.0)
+    block_index = 0
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "color_change":
+            block_index += 1
+            continue
+        if event_type not in {"stitch", "jump", "sequin_eject"}:
+            continue
+        if not isinstance(event.get("x"), (int, float)) or not isinstance(
+            event.get("y"), (int, float)
+        ):
+            continue
+        target = (float(event["x"]), float(event["y"]))
+        if event_type == "stitch" or show_jumps:
+            color = (
+                PALETTE[block_index % len(PALETTE)]
+                if color_blocks
+                else PALETTE[0]
+            )
+            segments.append((current, target, color))
+        current = target
+    if not segments:
         raise ValueError("record has no renderable stitch path")
 
-    points = [(0.0, 0.0)] + [(float(event["x"]), float(event["y"])) for event in moving]
+    points = [point for start, target, _ in segments for point in (start, target)]
     min_x = min(point[0] for point in points)
     max_x = max(point[0] for point in points)
     min_y = min(point[1] for point in points)
@@ -113,28 +131,13 @@ def render_preview(
         )
 
     pixels = bytearray([255] * width * height * 3)
-    current = (0.0, 0.0)
-    block_index = 0
-    for event in events:
-        event_type = event.get("type")
-        if event_type == "color_change":
-            block_index += 1
-            continue
-        if event_type not in {"stitch", "jump", "sequin_eject"}:
-            continue
-        if not isinstance(event.get("x"), (int, float)) or not isinstance(event.get("y"), (int, float)):
-            continue
-        target = (float(event["x"]), float(event["y"]))
-        should_draw = event_type == "stitch" or show_jumps
-        if should_draw:
-            color = PALETTE[block_index % len(PALETTE)] if color_blocks else PALETTE[0]
-            x0, y0 = project(*current)
-            x1, y1 = project(*target)
-            for x, y in _line_points(x0, y0, x1, y1):
-                if 0 <= x < width and 0 <= y < height:
-                    position = (y * width + x) * 3
-                    pixels[position : position + 3] = bytes(color)
-        current = target
+    for start, target, color in segments:
+        x0, y0 = project(*start)
+        x1, y1 = project(*target)
+        for x, y in _line_points(x0, y0, x1, y1):
+            if 0 <= x < width and 0 <= y < height:
+                position = (y * width + x) * 3
+                pixels[position : position + 3] = bytes(color)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_name(f".{output_path.name}.tmp")

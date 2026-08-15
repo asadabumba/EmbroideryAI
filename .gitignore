@@ -3,6 +3,7 @@
 *.py[cod]
 *.pyo
 .pytest_cache/
+.codex-test-tmp/
 
 # Virtual environment
 .venv/

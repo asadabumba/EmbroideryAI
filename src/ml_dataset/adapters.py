@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,35 @@ def parse_dst(path: Path) -> ParsedSource:
                 "severity": "error",
                 "code": "missing_end_command",
                 "message": "DST sequence does not contain a decoded end command",
+            }
+        )
+    frequencies = Counter(command.get("type") for command in commands)
+    declared_commands = header.get("ST")
+    if isinstance(declared_commands, int) and declared_commands != len(commands):
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "header_command_count_mismatch",
+                "message": (
+                    f"DST header declares {declared_commands} commands, "
+                    f"but {len(commands)} were decoded"
+                ),
+            }
+        )
+    declared_color_changes = header.get("CO")
+    decoded_color_changes = frequencies.get("color_change", 0)
+    if (
+        isinstance(declared_color_changes, int)
+        and declared_color_changes != decoded_color_changes
+    ):
+        diagnostics.append(
+            {
+                "severity": "error",
+                "code": "header_color_change_count_mismatch",
+                "message": (
+                    f"DST header declares {declared_color_changes} color changes, "
+                    f"but {decoded_color_changes} were decoded"
+                ),
             }
         )
 

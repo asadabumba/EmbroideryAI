@@ -54,9 +54,9 @@ Unavailable with the current EMB parser:
 
 ### Checked-in strict-pair metadata
 
-`dataset/paired/strict_pairs.json` directly contains 71 pair references and matching evidence fields: normalized name, EMB/DST paths, DDD and DST stitch counts, relative stitch/width errors, DDD color counts/changes, DST color changes, quality score, coverage percentage, and machine name. Those are historical pair-selection metadata.
+`dataset/paired/strict_pairs.json` directly contains 57 pair references and matching evidence fields: normalized name, EMB/DST paths, DDD and DST stitch counts, relative stitch/width errors, DDD color counts/changes, DST color changes, quality score, coverage percentage, and machine name. Those are historical pair-selection metadata. The declared `pair_count` and all path mappings are checked when the index is loaded.
 
-On this machine, the referenced EMB/DST files and the source ranking JSON are absent. Consequently, Stage 2 does not claim that the 71 pairs were revalidated locally. When the files arrive, the pair index groups the EMB and DST representations under one source design and retains the row as provenance.
+On this machine, the referenced EMB/DST files and the source ranking JSON are absent. Consequently, Stage 2 does not claim that the 57 pairs were revalidated locally. When the files arrive, the pair index groups the EMB and DST representations under one source design and retains the row as provenance.
 
 ## Canonical record
 
@@ -86,4 +86,6 @@ The builder writes:
 - `validation.json` and `validation.md`;
 - `build_report.json` with run-specific built/reused/failure counts.
 
-Data artifacts are deterministically ordered. Cached records are reused only when the content hash, schema, lineage, and pair metadata fingerprint all match.
+JSON readers and writers reject non-standard `NaN` and infinity values. Validation checks deterministic identities, safe relative paths, finite and internally consistent geometry, command/count consistency, lineage, declared preview files, duplicate records, complete split membership, and original-family leakage.
+
+Data artifacts are deterministically ordered. Cache and preview names use stable source-path hashes, so changing a source atomically replaces that source's derived artifacts. Cached records are reused only when the content hash, schema, build-pipeline version, lineage, pair metadata, renderer configuration, and canonical validation all match. Ambiguous suffix matches in lineage or pair metadata are errors rather than silent fallbacks; a uniquely prefixed original reference is reconciled to the discovered source path while retaining the reported path as provenance.
