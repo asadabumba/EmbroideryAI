@@ -399,6 +399,51 @@ def test_task_filter_skips_complete_group_without_opening_wilcom(
     assert "Пропущено готовых вариантов: 1" in output
 
 
+def test_publish_variant_retries_transient_file_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publishing_path = tmp_path / ".variant.__publishing_test.EMB"
+    output_path = tmp_path / "variant.EMB"
+    publishing_path.write_bytes(b"ready")
+    real_rename = Path.rename
+    attempts = 0
+
+    def transiently_locked(
+        file_path: Path,
+        target: Path,
+    ) -> Path:
+        nonlocal attempts
+        attempts += 1
+
+        if attempts < 3:
+            raise PermissionError(
+                "Wilcom still owns the publishing file"
+            )
+
+        return real_rename(
+            file_path,
+            target,
+        )
+
+    monkeypatch.setattr(
+        Path,
+        "rename",
+        transiently_locked,
+    )
+
+    grouped.publish_variant_when_unlocked(
+        publishing_path,
+        output_path,
+        timeout=1.0,
+        poll_interval=0.0,
+    )
+
+    assert attempts == 3
+    assert output_path.read_bytes() == b"ready"
+    assert not publishing_path.exists()
+
+
 def test_atomic_publish_checkpoints_before_final_path_appears(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

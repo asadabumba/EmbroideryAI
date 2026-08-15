@@ -105,6 +105,45 @@ def test_verifies_complete_unique_nonempty_dataset(
     assert result.retries == 1
 
 
+def test_source_filter_accepts_canonical_subset(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, csv_path = (
+        make_complete_dataset(tmp_path)
+    )
+
+    result = verification.verify_positioned_dataset(
+        csv_path,
+        input_dir,
+        output_dir,
+        expected_sources=1,
+        expected_coordinates=2,
+        expected_tasks=2,
+        sources=["design.EMB"],
+    )
+
+    assert result.expected_outputs == 2
+
+
+def test_source_filter_rejects_unknown_source(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, csv_path = (
+        make_complete_dataset(tmp_path)
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="sources отсутствуют",
+    ):
+        verification.verify_positioned_dataset(
+            csv_path,
+            input_dir,
+            output_dir,
+            sources=["missing.EMB"],
+        )
+
+
 def test_rejects_zero_byte_output(
     tmp_path: Path,
 ) -> None:
@@ -150,6 +189,70 @@ def test_rejects_unresolved_report_error(
         )
 
 
+def test_accepts_wilcom_coordinate_rounding(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, csv_path = (
+        make_complete_dataset(tmp_path)
+    )
+    report_path = output_dir / "batch_results.csv"
+    results = verification.read_batch_results(
+        report_path,
+        input_dir=input_dir,
+        output_dir=output_dir,
+    )
+    results[0]["actual_x"] = "0.99"
+
+    from automate_wilcom_batch import (
+        write_batch_results_atomic,
+    )
+
+    write_batch_results_atomic(
+        report_path,
+        results,
+    )
+
+    verification.verify_positioned_dataset(
+        csv_path,
+        input_dir,
+        output_dir,
+    )
+
+
+def test_rejects_coordinate_outside_wilcom_tolerance(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, csv_path = (
+        make_complete_dataset(tmp_path)
+    )
+    report_path = output_dir / "batch_results.csv"
+    results = verification.read_batch_results(
+        report_path,
+        input_dir=input_dir,
+        output_dir=output_dir,
+    )
+    results[0]["actual_x"] = "0.98"
+
+    from automate_wilcom_batch import (
+        write_batch_results_atomic,
+    )
+
+    write_batch_results_atomic(
+        report_path,
+        results,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Actual coordinates",
+    ):
+        verification.verify_positioned_dataset(
+            csv_path,
+            input_dir,
+            output_dir,
+        )
+
+
 def test_rejects_extra_or_unfinished_emb(
     tmp_path: Path,
 ) -> None:
@@ -173,4 +276,3 @@ def test_rejects_extra_or_unfinished_emb(
             input_dir,
             output_dir,
         )
-

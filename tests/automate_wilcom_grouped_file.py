@@ -424,6 +424,33 @@ def remove_variant_publishing_copy(
         )
 
 
+def publish_variant_when_unlocked(
+    publishing_path: Path,
+    output_path: Path,
+    timeout: float = 10.0,
+    poll_interval: float = 0.1,
+) -> None:
+    """Атомарно публикует EMB после освобождения файла Wilcom."""
+
+    deadline = time.monotonic() + max(
+        0.0,
+        timeout,
+    )
+
+    while True:
+        try:
+            publishing_path.rename(
+                output_path
+            )
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+
+            if poll_interval > 0:
+                time.sleep(poll_interval)
+
+
 def open_working_document(
     working_path: Path,
     es_path: Path | None = None,
@@ -1237,8 +1264,9 @@ def run_grouped_file(
                     )
 
                 if publishing_path is not None:
-                    publishing_path.rename(
-                        task.output_path
+                    publish_variant_when_unlocked(
+                        publishing_path,
+                        task.output_path,
                     )
                     publishing_path = None
 

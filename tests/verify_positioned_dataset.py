@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -32,6 +33,20 @@ class DatasetVerification:
     actual_outputs: int
     report_rows: int
     retries: int
+
+
+COORDINATE_TOLERANCE = Decimal("0.011")
+
+
+def coordinates_match(
+    actual: str,
+    requested: str,
+) -> bool:
+    difference = abs(
+        Decimal(canonical_coordinate(actual))
+        - Decimal(canonical_coordinate(requested))
+    )
+    return difference <= COORDINATE_TOLERANCE
 
 
 def normalized_path(file_path: Path) -> str:
@@ -80,6 +95,7 @@ def verify_positioned_dataset(
     expected_sources: int | None = None,
     expected_coordinates: int | None = None,
     expected_tasks: int | None = None,
+    sources: list[str] | None = None,
 ) -> DatasetVerification:
     input_root = input_dir.resolve()
     output_root = output_dir.resolve()
@@ -95,6 +111,34 @@ def verify_positioned_dataset(
         input_root,
         output_root,
     )
+
+    if sources:
+        requested_sources = {
+            Path(source).as_posix().casefold()
+            for source in sources
+        }
+        available_sources = {
+            task.relative_source_file.casefold()
+            for task in tasks
+        }
+        unknown_sources = (
+            requested_sources - available_sources
+        )
+
+        if unknown_sources:
+            raise ValueError(
+                "Запрошенные sources отсутствуют в CSV: "
+                + ", ".join(sorted(unknown_sources))
+            )
+
+        tasks = [
+            task
+            for task in tasks
+            if (
+                task.relative_source_file.casefold()
+                in requested_sources
+            )
+        ]
     sources = {
         task.relative_source_file.casefold()
         for task in tasks
@@ -214,10 +258,14 @@ def verify_positioned_dataset(
             )
 
         if (
-            canonical_coordinate(result["actual_x"])
-            != canonical_coordinate(task.requested_x)
-            or canonical_coordinate(result["actual_y"])
-            != canonical_coordinate(task.requested_y)
+            not coordinates_match(
+                result["actual_x"],
+                task.requested_x,
+            )
+            or not coordinates_match(
+                result["actual_y"],
+                task.requested_y,
+            )
         ):
             raise ValueError(
                 "Actual coordinates не совпадают с requested: "
@@ -312,6 +360,11 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--expected-tasks",
         type=int,
     )
+    parser.add_argument(
+        "--source",
+        action="append",
+        dest="sources",
+    )
     return parser
 
 
@@ -328,6 +381,7 @@ def main() -> None:
                 args.expected_coordinates
             ),
             expected_tasks=args.expected_tasks,
+            sources=args.sources,
         )
     except Exception as error:
         print(

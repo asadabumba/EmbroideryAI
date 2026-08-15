@@ -25,7 +25,10 @@ from automate_wilcom_batch import (
     upsert_result,
     write_batch_results_atomic,
 )
-from automate_wilcom_grouped_file import run_grouped_file
+from automate_wilcom_grouped_file import (
+    publish_variant_when_unlocked,
+    run_grouped_file,
+)
 
 
 PROGRESS_DIR_NAME = ".grouped_progress"
@@ -385,8 +388,9 @@ def recover_stale_group_artifacts(
             )
             and nonempty_file_exists(publishing_path)
         ):
-            publishing_path.rename(
-                task.output_path
+            publish_variant_when_unlocked(
+                publishing_path,
+                task.output_path,
             )
             print(
                 "Восстановлен checkpointed output: ",
