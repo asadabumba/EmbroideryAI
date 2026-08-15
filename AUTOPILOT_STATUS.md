@@ -1,14 +1,14 @@
 ﻿# EmbroideryAI Autopilot Status
 
-Updated: 2026-08-16 01:00
+Updated: 2026-08-16 01:13
 
-Stage: validating resumable grouped generation
+Stage: full dataset generation
 
 Branch:
 codex-autopilot-20260815
 
 Code validation:
-268 tests passed
+273 tests passed
 
 Real Wilcom validation:
 2/2 smoke passed
@@ -33,11 +33,28 @@ Multi-source validation:
 Previous sandbox blocker:
 stale; direct project automation now controls Wilcom
 
-Dataset target:
-0 / 17,925 verified in final production run
+Full dataset:
+Sources complete: 10 / 717
+Variants verified: 250 / 17,925
+Percent: 1.39%
+
+Current source:
+next: experiments/v43/same_path/e_noop2.EMB
+
+Retries:
+0
+
+Last error:
+none
+
+Average seconds/variant:
+5.11
+
+Estimated remaining time:
+approximately 25.1 hours
 
 Current action:
-production preflight, then first 10-source full dataset chunk
+run and verify production chunk 2 (sources 11-20)
 
 Latest code commit:
 e44300d Handle delayed grouped EMB publication
