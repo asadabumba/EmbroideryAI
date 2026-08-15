@@ -1702,7 +1702,7 @@ def set_value(
     hwnd = edit.handle
 
     edit.click_input()
-    time.sleep(0.2)
+    time.sleep(0.05)
 
     # Wilcom отображает значение, хотя GetWindowText
     # для этого внутреннего Edit возвращает пустоту.
@@ -1713,7 +1713,7 @@ def set_value(
         value,
     )
 
-    time.sleep(0.3)
+    time.sleep(0.10)
 
     print(
         "Передаю значение:",
@@ -1728,7 +1728,7 @@ def set_value(
         set_foreground=False,
     )
 
-    time.sleep(1.0)
+    time.sleep(0.40)
 
 
 def parse_number(value: str) -> float:
