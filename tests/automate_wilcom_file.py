@@ -3517,6 +3517,31 @@ def wait_for_save_as_dialog(
         )
 
 
+
+def raw_mouse_click(
+    point: tuple[int, int],
+) -> None:
+    x, y = point
+
+    win32api.SetCursorPos(
+        (int(x), int(y))
+    )
+    win32api.mouse_event(
+        win32con.MOUSEEVENTF_LEFTDOWN,
+        0,
+        0,
+        0,
+        0,
+    )
+    win32api.mouse_event(
+        win32con.MOUSEEVENTF_LEFTUP,
+        0,
+        0,
+        0,
+        0,
+    )
+
+
 def open_save_as_dialog(
     main_hwnd: int,
     timeout: float = SAVE_AS_DIALOG_TIMEOUT,
@@ -3636,15 +3661,9 @@ def open_save_as_dialog(
                 and len(save_as_point) == 2
             ):
                 try:
-                    mouse.click(
-                        button="left",
-                        coords=file_point,
-                    )
-                    time.sleep(0.25)
-                    mouse.click(
-                        button="left",
-                        coords=save_as_point,
-                    )
+                    raw_mouse_click(file_point)
+                    time.sleep(0.05)
+                    raw_mouse_click(save_as_point)
 
                     dialog_hwnd = (
                         wait_dialog_with_timing(
@@ -3653,8 +3672,7 @@ def open_save_as_dialog(
                                 1.0,
                                 dialog_timeout,
                             ),
-                        )
-                    )
+                        )                    )
                 except Exception:
                     dialog_hwnd = 0
 

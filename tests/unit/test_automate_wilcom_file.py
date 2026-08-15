@@ -60,6 +60,11 @@ def reset_save_as_win32_state(
         "click",
         lambda *_args, **_kwargs: None,
     )
+    monkeypatch.setattr(
+        automation,
+        "raw_mouse_click",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 @pytest.mark.parametrize(
