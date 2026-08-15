@@ -1,6 +1,6 @@
 ﻿# EmbroideryAI Autopilot Status
 
-Updated: 2026-08-16 01:13
+Updated: 2026-08-16 01:35
 
 Stage: full dataset generation
 
@@ -8,7 +8,7 @@ Branch:
 codex-autopilot-20260815
 
 Code validation:
-273 tests passed
+274 tests passed
 
 Real Wilcom validation:
 2/2 smoke passed
@@ -34,27 +34,27 @@ Previous sandbox blocker:
 stale; direct project automation now controls Wilcom
 
 Full dataset:
-Sources complete: 10 / 717
-Variants verified: 250 / 17,925
-Percent: 1.39%
+Sources complete: 18 / 717
+Variants verified: 450 / 17,925
+Percent: 2.51%
 
 Current source:
-next: experiments/v43/same_path/e_noop2.EMB
+next: Pumpkin/Hatch_Halloween-Quilt - Pumpkin_e3.EMB
 
 Retries:
-0
+4 source retry attempts
 
 Last error:
-none
+2 originals require newer Wilcom; `_e3` companions succeeded
 
 Average seconds/variant:
-5.11
+5.23
 
 Estimated remaining time:
-approximately 25.1 hours
+approximately 25.4 hours
 
 Current action:
-run and verify production chunk 2 (sources 11-20)
+run and verify production chunk 3 (sources 21-30)
 
 Latest code commit:
-e44300d Handle delayed grouped EMB publication
+6ef17ee Verify canonical production chunks independently
