@@ -1,6 +1,6 @@
 ﻿# EmbroideryAI Autopilot Status
 
-Updated: 2026-08-16 00:14
+Updated: 2026-08-16 00:43
 
 Stage: validating resumable grouped generation
 
@@ -20,6 +20,16 @@ Grouped resumability validation:
 25/25 atomic stability verified
 resume skipped 25/25 completed tasks
 
+Large-source publish validation:
+2/2 smoke verified
+25/25 stability verified
+0 errors
+
+Representative pass 1:
+2/7 sources complete
+50/175 variants checkpointed
+found and fixed transient atomic rename race
+
 Previous sandbox blocker:
 stale; direct project automation now controls Wilcom
 
@@ -27,7 +37,7 @@ Dataset target:
 0 / 17,925 verified in final production run
 
 Current action:
-run seven-source / 175-variant representative validation
+commit validated publish fix, then fresh 5-source validation
 
 Latest code commit:
-4854e66 Add resumable grouped dataset generation
+e44300d Handle delayed grouped EMB publication
