@@ -32,6 +32,11 @@ def reset_save_as_win32_state(
     )
     monkeypatch.setattr(
         automation,
+        "POSITION_CONTROLS_CACHE",
+        {},
+    )
+    monkeypatch.setattr(
+        automation,
         "_SAVE_AS_WIN32_COMMAND_ID",
         None,
     )
@@ -1839,7 +1844,7 @@ def test_set_document_position_does_not_save(
     monkeypatch.setattr(
         automation,
         "wait_for_enabled_controls",
-        lambda *_: controls,
+        lambda *_args, **_kwargs: controls,
     )
     monkeypatch.setattr(
         automation,

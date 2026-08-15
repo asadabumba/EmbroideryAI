@@ -42,6 +42,10 @@ SAVE_AS_MENU_TEXTS = {
 }
 SAVE_AS_MENU_CACHE: dict[str, str] = {}
 SAVE_AS_MOUSE_CACHE: dict[str, object] = {}
+POSITION_CONTROLS_CACHE: dict[
+    int,
+    tuple[object, object, object, object],
+] = {}
 _SAVE_AS_WIN32_COMMAND_ID: int | None = None
 _SAVE_AS_WIN32_COMMAND_HWND: int | None = None
 _SAVE_AS_WIN32_DISABLED_HWNDS: set[int] = set()
@@ -1540,6 +1544,45 @@ def get_position_controls(
     )
 
 
+def get_cached_position_controls(
+    main_hwnd: int,
+):
+    controls = POSITION_CONTROLS_CACHE.get(
+        main_hwnd
+    )
+
+    if controls is None:
+        return None
+
+    (
+        x_pane,
+        x_edit,
+        y_pane,
+        y_edit,
+    ) = controls
+
+    try:
+        for edit in (x_edit, y_edit):
+            edit_hwnd = int(edit.handle)
+
+            if (
+                not edit_hwnd
+                or not win32gui.IsWindow(edit_hwnd)
+                or not edit.is_enabled()
+            ):
+                raise RuntimeError(
+                    "cached Edit is no longer available"
+                )
+    except Exception:
+        POSITION_CONTROLS_CACHE.pop(
+            main_hwnd,
+            None,
+        )
+        return None
+
+    return controls
+
+
 def wait_for_selected_design(
     window,
     main_hwnd: int,
@@ -1600,16 +1643,32 @@ def wait_for_selected_design(
 def wait_for_enabled_controls(
     window,
     timeout: float = 8.0,
+    main_hwnd: int | None = None,
 ):
     deadline = time.time() + timeout
     last_error: Exception | None = None
 
     while time.time() < deadline:
+        if main_hwnd is not None:
+            cached = get_cached_position_controls(
+                main_hwnd
+            )
+
+            if cached is not None:
+                return cached
+
         try:
-            return get_position_controls(
+            controls = get_position_controls(
                 window,
                 require_enabled=True,
             )
+
+            if main_hwnd is not None:
+                POSITION_CONTROLS_CACHE[
+                    main_hwnd
+                ] = controls
+
+            return controls
         except Exception as error:
             last_error = error
             time.sleep(0.25)
@@ -4937,13 +4996,40 @@ def set_document_position(
     print()
     print("Жду загрузки и выделяю дизайн...")
 
-    x_pane, x_edit, y_pane, y_edit = (
-        wait_for_selected_design(
+    cached_controls = get_cached_position_controls(
+        hwnd
+    )
+
+    if cached_controls is None:
+        (
+            x_pane,
+            x_edit,
+            y_pane,
+            y_edit,
+        ) = wait_for_selected_design(
             window,
             hwnd,
             timeout=60.0,
         )
-    )
+
+        POSITION_CONTROLS_CACHE[hwnd] = (
+            x_pane,
+            x_edit,
+            y_pane,
+            y_edit,
+        )
+    else:
+        (
+            x_pane,
+            x_edit,
+            y_pane,
+            y_edit,
+        ) = cached_controls
+
+        print()
+        print(
+            "Using cached position controls."
+        )
 
     old_x = read_value(
         x_pane,
@@ -4970,7 +5056,10 @@ def set_document_position(
         x_edit,
         y_pane,
         y_edit,
-    ) = wait_for_enabled_controls(window)
+    ) = wait_for_enabled_controls(
+        window,
+        main_hwnd=hwnd,
+    )
 
     set_value(
         y_edit,
@@ -4982,7 +5071,10 @@ def set_document_position(
         x_edit,
         y_pane,
         y_edit,
-    ) = wait_for_enabled_controls(window)
+    ) = wait_for_enabled_controls(
+        window,
+        main_hwnd=hwnd,
+    )
 
     new_x = read_value(
         x_pane,
