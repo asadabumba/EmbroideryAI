@@ -354,6 +354,204 @@ def test_run_opens_once_saves_each_variant_and_removes_working(
     )
 
 
+def test_task_filter_skips_complete_group_without_opening_wilcom(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source_path = tmp_path / "Ghost.EMB"
+    output_dir = tmp_path / "output"
+    source_path.write_bytes(b"source")
+    task = make_task(
+        1,
+        source_path,
+        output_dir / "variant.EMB",
+        "1",
+        "2",
+    )
+    monkeypatch.setattr(
+        grouped,
+        "prepare_group_tasks",
+        lambda *_args, **_kwargs: (
+            source_path,
+            [task],
+        ),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "create_group_working_copy",
+        lambda *_: pytest.fail(
+            "Полностью готовая группа не должна открывать Wilcom"
+        ),
+    )
+
+    result = grouped.run_grouped_file(
+        csv_path=tmp_path / "unused.csv",
+        input_dir=tmp_path,
+        output_dir=output_dir,
+        source="Ghost.EMB",
+        task_filter=lambda _: False,
+    )
+
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "Исходный EMB открыт: 0 раз" in output
+    assert "Пропущено готовых вариантов: 1" in output
+
+
+def test_atomic_publish_checkpoints_before_final_path_appears(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "Ghost.EMB"
+    output_dir = tmp_path / "output"
+    output_path = output_dir / "variant.EMB"
+    source_path.write_bytes(b"source")
+    task = make_task(
+        1,
+        source_path,
+        output_path,
+        "1",
+        "2",
+    )
+    save_paths: list[Path] = []
+    checkpoint_values: list[dict[str, str]] = []
+    position_values = {
+        "old_x": "0",
+        "old_y": "0",
+        "new_x": "1",
+        "new_y": "2",
+    }
+    monkeypatch.setattr(
+        grouped,
+        "prepare_group_tasks",
+        lambda *_args, **_kwargs: (
+            source_path,
+            [task],
+        ),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "open_working_document",
+        lambda *_args, **_kwargs: 123,
+    )
+    monkeypatch.setattr(
+        grouped,
+        "create_fresh_main_window",
+        lambda _: object(),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "set_document_position",
+        lambda *_: position_values,
+    )
+
+    def save_variant(_hwnd: int, path: Path) -> None:
+        save_paths.append(path)
+        path.write_bytes(b"ready")
+
+    def checkpoint(
+        checkpoint_task: grouped.PreparedTask,
+        values: dict[str, str],
+    ) -> None:
+        assert checkpoint_task is task
+        assert not output_path.exists()
+        assert save_paths[-1].read_bytes() == b"ready"
+        checkpoint_values.append(values)
+
+    monkeypatch.setattr(
+        grouped,
+        "save_document_as",
+        save_variant,
+    )
+    monkeypatch.setattr(
+        grouped,
+        "close_group_document",
+        lambda *_args, **_kwargs: "",
+    )
+
+    result = grouped.run_grouped_file(
+        csv_path=tmp_path / "unused.csv",
+        input_dir=tmp_path,
+        output_dir=output_dir,
+        source="Ghost.EMB",
+        atomic_publish=True,
+        on_variant_success=checkpoint,
+    )
+
+    assert result == 1
+    assert checkpoint_values == [position_values]
+    assert len(save_paths) == 1
+    assert save_paths[0] != output_path
+    assert ".__publishing_" in save_paths[0].name
+    assert output_path.read_bytes() == b"ready"
+    assert not save_paths[0].exists()
+
+
+def test_atomic_publish_refuses_existing_final_without_mutating_document(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "Ghost.EMB"
+    output_dir = tmp_path / "output"
+    output_path = output_dir / "variant.EMB"
+    source_path.write_bytes(b"source")
+    output_path.parent.mkdir()
+    output_path.write_bytes(b"verified")
+    task = make_task(
+        1,
+        source_path,
+        output_path,
+        "1",
+        "2",
+    )
+    errors: list[BaseException] = []
+    monkeypatch.setattr(
+        grouped,
+        "prepare_group_tasks",
+        lambda *_args, **_kwargs: (
+            source_path,
+            [task],
+        ),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "open_working_document",
+        lambda *_args, **_kwargs: 123,
+    )
+    monkeypatch.setattr(
+        grouped,
+        "create_fresh_main_window",
+        lambda _: pytest.fail(
+            "Конфликт final output проверяется до изменения документа"
+        ),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "cleanup_group_document_best_effort",
+        lambda *_: None,
+    )
+
+    with pytest.raises(
+        FileExistsError,
+        match="не будет его перезаписывать",
+    ):
+        grouped.run_grouped_file(
+            csv_path=tmp_path / "unused.csv",
+            input_dir=tmp_path,
+            output_dir=output_dir,
+            source="Ghost.EMB",
+            atomic_publish=True,
+            on_variant_error=(
+                lambda _task, error, _values: errors.append(error)
+            ),
+        )
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], FileExistsError)
+    assert output_path.read_bytes() == b"verified"
+
+
 def test_failed_variant_keeps_success_and_removes_working(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -717,6 +915,11 @@ def test_close_returns_immediately_when_active_stem_disappears(
         grouped,
         "send_ctrl_virtual_key",
         lambda key: ctrl_calls.append(key),
+    )
+    monkeypatch.setattr(
+        grouped,
+        "find_save_changes_dialog",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         grouped.win32gui,

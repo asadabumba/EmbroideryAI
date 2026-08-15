@@ -916,7 +916,13 @@ def reported_output_exists(
     if not output_path.is_absolute():
         output_path = output_dir.resolve() / output_path
 
-    return output_path.is_file()
+    try:
+        return (
+            output_path.is_file()
+            and output_path.stat().st_size > 0
+        )
+    except OSError:
+        return False
 
 
 def remove_file_best_effort(

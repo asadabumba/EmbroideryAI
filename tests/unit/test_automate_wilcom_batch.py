@@ -644,6 +644,28 @@ def test_resume_reprocesses_success_with_missing_output(
     assert output_path.read_bytes() == b"source"
 
 
+def test_reported_output_requires_nonempty_file(
+    tmp_path: Path,
+) -> None:
+    output_path = tmp_path / "variant.EMB"
+    result = {
+        "output_file": str(output_path),
+    }
+    output_path.write_bytes(b"")
+
+    assert not batch.reported_output_exists(
+        result,
+        tmp_path,
+    )
+
+    output_path.write_bytes(b"ready")
+
+    assert batch.reported_output_exists(
+        result,
+        tmp_path,
+    )
+
+
 def test_retry_errors_runs_only_errors_and_replaces_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -6,6 +6,7 @@ import shutil
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 import win32con
@@ -42,6 +43,21 @@ from automate_wilcom_file import (
     wait_for_document_open,
     wait_for_es_main_window,
 )
+
+
+TaskFilter = Callable[[PreparedTask], bool]
+VariantSuccessCallback = Callable[
+    [PreparedTask, dict[str, str]],
+    None,
+]
+VariantErrorCallback = Callable[
+    [
+        PreparedTask,
+        BaseException,
+        dict[str, str] | None,
+    ],
+    None,
+]
 
 
 CLOSE_MENU_TEXTS = {
@@ -376,6 +392,34 @@ def remove_group_working_copy(
     except OSError as error:
         print(
             "Не удалось удалить working copy: "
+            f"{error}"
+        )
+
+
+def build_variant_publishing_path(
+    output_path: Path,
+) -> Path:
+    """Возвращает уникальный временный EMB рядом с final output."""
+
+    return output_path.with_name(
+        f".{output_path.stem}"
+        f".__publishing_{uuid.uuid4().hex}.EMB"
+    )
+
+
+def remove_variant_publishing_copy(
+    publishing_path: Path | None,
+) -> None:
+    if publishing_path is None:
+        return
+
+    try:
+        publishing_path.unlink(
+            missing_ok=True,
+        )
+    except OSError as error:
+        print(
+            "Не удалось удалить publishing copy: "
             f"{error}"
         )
 
@@ -1003,6 +1047,10 @@ def run_grouped_file(
     limit: int | None = None,
     es_path: Path | None = None,
     timings: bool = False,
+    task_filter: TaskFilter | None = None,
+    on_variant_success: VariantSuccessCallback | None = None,
+    on_variant_error: VariantErrorCallback | None = None,
+    atomic_publish: bool = False,
 ) -> int:
     """Создаёт несколько вариантов из одного открытого EMB."""
 
@@ -1015,6 +1063,26 @@ def run_grouped_file(
         source,
         limit=limit,
     )
+
+    skipped_count = 0
+
+    if task_filter is not None:
+        selected_tasks = [
+            task
+            for task in tasks
+            if task_filter(task)
+        ]
+        skipped_count = len(tasks) - len(selected_tasks)
+        tasks = selected_tasks
+
+    if not tasks:
+        print("Исходный EMB открыт: 0 раз")
+        print("Создано вариантов: 0")
+        print("Пропущено готовых вариантов:", skipped_count)
+        print("Ошибок: 0")
+        print("Время: 0.00 секунд")
+        return 0
+
     opening_started = start_timing(timings)
     copy_started = start_timing(timings)
 
@@ -1098,8 +1166,27 @@ def run_grouped_file(
             variant_started = start_timing(
                 timings
             )
+            position_values: dict[str, str] | None = None
+            publishing_path: Path | None = None
 
             try:
+                save_path = task.output_path
+
+                if atomic_publish:
+                    if task.output_path.exists():
+                        raise FileExistsError(
+                            "Final output уже существует; "
+                            "атомарная grouped-публикация не будет "
+                            f"его перезаписывать: {task.output_path}"
+                        )
+
+                    publishing_path = (
+                        build_variant_publishing_path(
+                            task.output_path
+                        )
+                    )
+                    save_path = publishing_path
+
                 window = create_fresh_main_window(
                     main_hwnd
                 )
@@ -1108,7 +1195,7 @@ def run_grouped_file(
                 )
 
                 try:
-                    set_document_position(
+                    position_values = set_document_position(
                         window,
                         main_hwnd,
                         task.requested_x,
@@ -1123,24 +1210,38 @@ def run_grouped_file(
                         )
 
                 possible_stems.append(
-                    task.output_path.stem
+                    save_path.stem
                 )
 
                 if timings:
                     save_document_as(
                         main_hwnd,
-                        task.output_path,
+                        save_path,
                         timings=variant_timings,
                     )
                 else:
                     save_document_as(
                         main_hwnd,
-                        task.output_path,
+                        save_path,
                     )
 
                 current_stem = (
-                    task.output_path.stem
+                    save_path.stem
                 )
+
+                if on_variant_success is not None:
+                    assert position_values is not None
+                    on_variant_success(
+                        task,
+                        position_values,
+                    )
+
+                if publishing_path is not None:
+                    publishing_path.rename(
+                        task.output_path
+                    )
+                    publishing_path = None
+
                 created_count += 1
                 print("  OK")
 
@@ -1167,11 +1268,29 @@ def run_grouped_file(
                     )
             except BaseException as error:
                 error_count = 1
+
+                if on_variant_error is not None:
+                    try:
+                        on_variant_error(
+                            task,
+                            error,
+                            position_values,
+                        )
+                    except Exception as callback_error:
+                        print(
+                            "  ERROR записи grouped checkpoint: "
+                            f"{callback_error}"
+                        )
+
                 print(
                     f"  ERROR в строке {row.row}: "
                     f"{error}"
                 )
                 raise
+            finally:
+                remove_variant_publishing_copy(
+                    publishing_path
+                )
 
         completion_started = start_timing(
             timings
@@ -1263,6 +1382,10 @@ def run_grouped_file(
         print(
             "Создано вариантов:",
             created_count,
+        )
+        print(
+            "Пропущено готовых вариантов:",
+            skipped_count,
         )
         print("Ошибок:", error_count)
         print(

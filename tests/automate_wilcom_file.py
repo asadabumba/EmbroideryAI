@@ -3672,7 +3672,8 @@ def open_save_as_dialog(
                                 1.0,
                                 dialog_timeout,
                             ),
-                        )                    )
+                        )
+                    )
                 except Exception:
                     dialog_hwnd = 0
 
@@ -4919,7 +4920,7 @@ def confirm_save_as(
         ):
             return
 
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     if not output_path.exists():
         file_status = "файл не появился"
