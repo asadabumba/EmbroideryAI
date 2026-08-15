@@ -30,6 +30,7 @@ from automate_wilcom_file import (
     close_document_best_effort,
     dismiss_save_changes_dialog,
     find_es_exe,
+    find_document_canvas,
     find_save_as_dialog,
     find_save_changes_dialog,
     focus_window,
@@ -696,6 +697,21 @@ def close_group_document(
         window.set_focus()
     except Exception:
         pass
+
+    canvas = find_document_canvas(main_hwnd)
+
+    if canvas is not None:
+        canvas_hwnd, _, _ = canvas
+
+        try:
+            Desktop(
+                backend="win32"
+            ).window(
+                handle=canvas_hwnd
+            ).wrapper_object().click_input()
+            time.sleep(0.05)
+        except Exception:
+            pass
 
     send_ctrl_virtual_key(
         win32con.VK_F4

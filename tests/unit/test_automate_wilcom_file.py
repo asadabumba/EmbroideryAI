@@ -45,6 +45,11 @@ def reset_save_as_win32_state(
         "_LOGGED_WIN32_FILE_MENUS",
         set(),
     )
+    monkeypatch.setattr(
+        automation.mouse,
+        "click",
+        lambda *_args, **_kwargs: None,
+    )
 
 
 @pytest.mark.parametrize(
@@ -2513,6 +2518,9 @@ class FakeFastMenuItem:
     def is_visible(self) -> bool:
         return True
 
+    def rectangle(self) -> FakeFastRectangle:
+        return FakeFastRectangle()
+
     def invoke(self) -> None:
         self.events.append(
             (
@@ -3058,21 +3066,31 @@ def test_nested_submenu_is_expanded_before_search(
     assert expanded == ["expand"]
 
 
-def test_successful_invoke_does_not_try_click_or_select(
+def test_save_as_item_uses_raw_mouse_click(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[str] = []
+    clicks: list[tuple[str, tuple[int, int]]] = []
 
     class SaveAsItem:
+        def rectangle(self) -> FakeFastRectangle:
+            return FakeFastRectangle()
+
         def invoke(self) -> None:
-            calls.append("invoke")
+            pytest.fail("invoke() ?? ?????? ??????????????")
 
         def click_input(self) -> None:
-            pytest.fail("click_input после успеха не нужен")
+            pytest.fail("click_input() ?? ?????? ??????????????")
 
         def select(self) -> None:
-            pytest.fail("select после успеха не нужен")
+            pytest.fail("select() ?? ?????? ??????????????")
 
+    monkeypatch.setattr(
+        automation.mouse,
+        "click",
+        lambda *, button, coords: clicks.append(
+            (button, coords)
+        ),
+    )
     monkeypatch.setattr(
         automation,
         "wait_for_save_as_dialog",
@@ -3084,8 +3102,9 @@ def test_successful_invoke_does_not_try_click_or_select(
         123,
         timeout=3.0,
     ) == 700
-    assert calls == ["invoke"]
-
+    assert clicks == [
+        ("left", (155, 260)),
+    ]
 
 def test_second_fast_save_as_call_uses_cached_exact_titles(
     monkeypatch: pytest.MonkeyPatch,
@@ -3319,7 +3338,8 @@ def test_open_save_as_fast_path_skips_slow_fallback_and_times_steps(
         "open_save_as_invoke_file_menu",
         "open_save_as_find_popup_menu",
         "open_save_as_find_save_as_item",
-        "open_save_as_invoke_save_as",
+        "open_save_as_get_item_rect",
+        "open_save_as_raw_mouse_click",
         "open_save_as_wait_dialog",
         "open_save_as_total",
         "open_save_as_dialog",

@@ -2900,68 +2900,77 @@ def invoke_save_as_item_and_wait(
         0.0,
         timeout,
     )
-    methods = (
-        "invoke",
-        "click_input",
-        "select",
+
+    rect_started = start_optional_timing(
+        timings
     )
 
-    for method_name in methods:
-        method = safe_uia_call(
-            lambda name=method_name: getattr(
-                item,
-                name,
-            ),
-            None,
+    try:
+        rectangle = get_uia_popup_rectangle(
+            item
+        )
+    finally:
+        finish_optional_timing(
+            timings,
+            "open_save_as_get_item_rect",
+            rect_started,
         )
 
-        if not callable(method):
-            continue
+    if rectangle is None:
+        return 0
 
-        invoke_started = start_optional_timing(
-            timings
+    left, top, right, bottom = rectangle
+
+    if right <= left or bottom <= top:
+        return 0
+
+    x = (left + right) // 2
+    y = (top + bottom) // 2
+
+    click_started = start_optional_timing(
+        timings
+    )
+
+    try:
+        mouse.click(
+            button="left",
+            coords=(x, y),
         )
-
-        try:
-            method()
-        except Exception:
-            add_optional_timing(
-                timings,
-                "open_save_as_invoke_save_as",
-                invoke_started,
-            )
-            continue
-
+    except Exception:
         add_optional_timing(
             timings,
-            "open_save_as_invoke_save_as",
-            invoke_started,
+            "open_save_as_raw_mouse_click",
+            click_started,
         )
-        remaining = deadline - time.monotonic()
+        return 0
 
-        if remaining <= 0:
-            return 0
+    add_optional_timing(
+        timings,
+        "open_save_as_raw_mouse_click",
+        click_started,
+    )
 
-        wait_started = start_optional_timing(
-            timings
+    remaining = deadline - time.monotonic()
+
+    if remaining <= 0:
+        return 0
+
+    wait_started = start_optional_timing(
+        timings
+    )
+
+    try:
+        return wait_for_save_as_dialog(
+            main_hwnd,
+            timeout=min(2.0, remaining),
+        )
+    finally:
+        add_optional_timing(
+            timings,
+            "open_save_as_wait_dialog",
+            wait_started,
         )
 
-        try:
-            dialog_hwnd = wait_for_save_as_dialog(
-                main_hwnd,
-                timeout=min(1.0, remaining),
-            )
-        finally:
-            add_optional_timing(
-                timings,
-                "open_save_as_wait_dialog",
-                wait_started,
-            )
-
-        if dialog_hwnd:
-            return dialog_hwnd
-
-    return 0
 
 
 def invoke_fast_save_as_menu(
@@ -3181,7 +3190,19 @@ def invoke_uia_file_menu_item(
         )
 
         try:
-            invoke_uia_control(target)
+            rectangle = get_uia_popup_rectangle(target)
+            if rectangle is None:
+                return False
+            left, top, right, bottom = rectangle
+            if right <= left or bottom <= top:
+                return False
+            mouse.click(
+                button="left",
+                coords=(
+                    (left + right) // 2,
+                    (top + bottom) // 2,
+                ),
+            )
         finally:
             add_optional_timing(
                 timings,
@@ -3271,7 +3292,19 @@ def invoke_uia_file_menu_item(
     )
 
     try:
-        invoke_uia_control(target)
+        rectangle = get_uia_popup_rectangle(target)
+        if rectangle is None:
+            return False
+        left, top, right, bottom = rectangle
+        if right <= left or bottom <= top:
+            return False
+        mouse.click(
+            button="left",
+            coords=(
+                (left + right) // 2,
+                (top + bottom) // 2,
+            ),
+        )
     finally:
         add_optional_timing(
             timings,
