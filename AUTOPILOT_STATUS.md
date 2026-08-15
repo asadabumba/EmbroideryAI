@@ -1,6 +1,6 @@
 ﻿# EmbroideryAI Autopilot Status
 
-Updated: 2026-08-16 01:35
+Updated: 2026-08-16 01:58
 
 Stage: full dataset generation
 
@@ -34,12 +34,12 @@ Previous sandbox blocker:
 stale; direct project automation now controls Wilcom
 
 Full dataset:
-Sources complete: 18 / 717
-Variants verified: 450 / 17,925
-Percent: 2.51%
+Sources complete: 28 / 717
+Variants verified: 700 / 17,925
+Percent: 3.91%
 
 Current source:
-next: Pumpkin/Hatch_Halloween-Quilt - Pumpkin_e3.EMB
+next: raw/1.D-(aziz zayka).EMB
 
 Retries:
 4 source retry attempts
@@ -48,13 +48,13 @@ Last error:
 2 originals require newer Wilcom; `_e3` companions succeeded
 
 Average seconds/variant:
-5.23
+5.24
 
 Estimated remaining time:
-approximately 25.4 hours
+approximately 25.1 hours
 
 Current action:
-run and verify production chunk 3 (sources 21-30)
+run and verify production chunk 4 (sources 31-40)
 
 Latest code commit:
 6ef17ee Verify canonical production chunks independently
