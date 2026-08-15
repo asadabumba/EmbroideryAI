@@ -125,6 +125,78 @@ def test_source_filter_accepts_canonical_subset(
     assert result.expected_outputs == 2
 
 
+def test_source_filter_ignores_other_canonical_outputs(
+    tmp_path: Path,
+) -> None:
+    input_dir, output_dir, csv_path = (
+        make_complete_dataset(tmp_path)
+    )
+    other_source = input_dir / "other.EMB"
+    other_source.write_bytes(b"other")
+    with csv_path.open("a", encoding="utf-8") as stream:
+        stream.write(
+            "other.EMB;5;6;variants/other.EMB\n"
+        )
+    rows = verification.read_coordinate_csv(csv_path)
+    tasks = verification.preflight_batch(
+        rows,
+        input_dir,
+        output_dir,
+    )
+    other_task = tasks[-1]
+    other_task.output_path.write_bytes(b"ready")
+    report_path = output_dir / "batch_results.csv"
+    results = verification.read_batch_results(
+        report_path,
+        input_dir=input_dir,
+        output_dir=output_dir,
+    )
+    results.append(
+        {
+            "row": str(other_task.coordinate_row.row),
+            "source_file": str(other_task.source_path),
+            "relative_source_file": (
+                other_task.relative_source_file
+            ),
+            "output_file": str(other_task.output_path),
+            "relative_output_file": (
+                other_task.relative_output_file
+            ),
+            "requested_x": other_task.requested_x,
+            "requested_y": other_task.requested_y,
+            "old_x": "0",
+            "old_y": "0",
+            "actual_x": other_task.requested_x,
+            "actual_y": other_task.requested_y,
+            "status": "success",
+            "error": "",
+            "attempts": "1",
+        }
+    )
+
+    from automate_wilcom_batch import (
+        write_batch_results_atomic,
+    )
+
+    write_batch_results_atomic(
+        report_path,
+        results,
+    )
+
+    result = verification.verify_positioned_dataset(
+        csv_path,
+        input_dir,
+        output_dir,
+        expected_sources=1,
+        expected_coordinates=2,
+        expected_tasks=2,
+        sources=["design.EMB"],
+    )
+
+    assert result.actual_outputs == 2
+    assert result.report_rows == 2
+
+
 def test_source_filter_rejects_unknown_source(
     tmp_path: Path,
 ) -> None:

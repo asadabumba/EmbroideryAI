@@ -106,11 +106,12 @@ def verify_positioned_dataset(
         )
 
     rows = read_coordinate_csv(csv_path)
-    tasks = preflight_batch(
+    all_tasks = preflight_batch(
         rows,
         input_root,
         output_root,
     )
+    tasks = all_tasks
 
     if sources:
         requested_sources = {
@@ -162,6 +163,10 @@ def verify_positioned_dataset(
         normalized_path(task.output_path)
         for task in tasks
     }
+    canonical_paths = {
+        normalized_path(task.output_path)
+        for task in all_tasks
+    }
 
     if len(source_coordinates) != len(tasks):
         raise ValueError(
@@ -201,11 +206,46 @@ def verify_positioned_dataset(
         )
 
     report_path = output_root / "batch_results.csv"
-    report_results = read_batch_results(
+    all_report_results = read_batch_results(
         report_path,
         input_dir=input_root,
         output_dir=output_root,
     )
+    all_expected_keys = {
+        task.task_key
+        for task in all_tasks
+    }
+    all_report_keys = {
+        report_key(
+            result,
+            input_root,
+            output_root,
+        )
+        for result in all_report_results
+    }
+    unexpected_keys = all_report_keys.difference(
+        all_expected_keys
+    )
+
+    if unexpected_keys:
+        raise ValueError(
+            "Batch report содержит задачи вне canonical CSV: "
+            f"{len(unexpected_keys)}"
+        )
+
+    expected_keys = {
+        task.task_key
+        for task in tasks
+    }
+    report_results = [
+        result
+        for result in all_report_results
+        if report_key(
+            result,
+            input_root,
+            output_root,
+        ) in expected_keys
+    ]
     indexed_results, positions = index_results(
         report_results,
         input_root,
@@ -215,28 +255,6 @@ def verify_positioned_dataset(
     if len(indexed_results) != len(report_results):
         raise ValueError(
             "Batch report содержит повторяющиеся task rows."
-        )
-
-    expected_keys = {
-        task.task_key
-        for task in tasks
-    }
-    report_keys = {
-        report_key(
-            result,
-            input_root,
-            output_root,
-        )
-        for result in report_results
-    }
-    unexpected_keys = report_keys.difference(
-        expected_keys
-    )
-
-    if unexpected_keys:
-        raise ValueError(
-            "Batch report содержит задачи вне canonical CSV: "
-            f"{len(unexpected_keys)}"
         )
 
     for task in tasks:
@@ -274,15 +292,18 @@ def verify_positioned_dataset(
 
         require_nonempty_output(task)
 
-    actual_emb_files = list(
+    all_actual_emb_files = list(
         output_root.rglob("*.EMB")
     )
-    actual_paths = {
+    all_actual_paths = {
         normalized_path(file_path)
-        for file_path in actual_emb_files
+        for file_path in all_actual_emb_files
     }
-    extra_paths = actual_paths.difference(
+    actual_paths = all_actual_paths.intersection(
         expected_paths
+    )
+    extra_paths = all_actual_paths.difference(
+        canonical_paths
     )
     missing_paths = expected_paths.difference(
         actual_paths
@@ -300,7 +321,7 @@ def verify_positioned_dataset(
 
     unfinished = [
         file_path
-        for file_path in actual_emb_files
+        for file_path in all_actual_emb_files
         if (
             ".working" in file_path.parts
             or ".__publishing_" in file_path.name
