@@ -41,6 +41,7 @@ SAVE_AS_MENU_TEXTS = {
     "speichern unter",
 }
 SAVE_AS_MENU_CACHE: dict[str, str] = {}
+SAVE_AS_MOUSE_CACHE: dict[str, object] = {}
 _SAVE_AS_WIN32_COMMAND_ID: int | None = None
 _SAVE_AS_WIN32_COMMAND_HWND: int | None = None
 _SAVE_AS_WIN32_DISABLED_HWNDS: set[int] = set()
@@ -3038,6 +3039,27 @@ def invoke_fast_save_as_menu(
             return 0
 
         file_menu, file_title = file_match
+
+        file_rectangle = get_uia_popup_rectangle(
+            file_menu
+        )
+
+        if file_rectangle is not None:
+            left, top, right, bottom = file_rectangle
+
+            if right > left and bottom > top:
+                if (
+                    SAVE_AS_MOUSE_CACHE.get("hwnd")
+                    != main_hwnd
+                ):
+                    SAVE_AS_MOUSE_CACHE.clear()
+
+                SAVE_AS_MOUSE_CACHE["hwnd"] = main_hwnd
+                SAVE_AS_MOUSE_CACHE["file_point"] = (
+                    (left + right) // 2,
+                    (top + bottom) // 2,
+                )
+
         snapshot_started = start_optional_timing(
             timings
         )
@@ -3196,12 +3218,24 @@ def invoke_uia_file_menu_item(
             left, top, right, bottom = rectangle
             if right <= left or bottom <= top:
                 return False
+
+            point = (
+                (left + right) // 2,
+                (top + bottom) // 2,
+            )
+
+            if (
+                SAVE_AS_MOUSE_CACHE.get("hwnd")
+                != main_hwnd
+            ):
+                SAVE_AS_MOUSE_CACHE.clear()
+
+            SAVE_AS_MOUSE_CACHE["hwnd"] = main_hwnd
+            SAVE_AS_MOUSE_CACHE["save_as_point"] = point
+
             mouse.click(
                 button="left",
-                coords=(
-                    (left + right) // 2,
-                    (top + bottom) // 2,
-                ),
+                coords=point,
             )
         finally:
             add_optional_timing(
@@ -3241,6 +3275,26 @@ def invoke_uia_file_menu_item(
 
     if file_item is None:
         return False
+
+    file_rectangle = get_uia_popup_rectangle(
+        file_item
+    )
+
+    if file_rectangle is not None:
+        left, top, right, bottom = file_rectangle
+
+        if right > left and bottom > top:
+            if (
+                SAVE_AS_MOUSE_CACHE.get("hwnd")
+                != main_hwnd
+            ):
+                SAVE_AS_MOUSE_CACHE.clear()
+
+            SAVE_AS_MOUSE_CACHE["hwnd"] = main_hwnd
+            SAVE_AS_MOUSE_CACHE["file_point"] = (
+                (left + right) // 2,
+                (top + bottom) // 2,
+            )
 
     invoke_file_started = start_optional_timing(
         timings
@@ -3298,12 +3352,24 @@ def invoke_uia_file_menu_item(
         left, top, right, bottom = rectangle
         if right <= left or bottom <= top:
             return False
+
+        point = (
+            (left + right) // 2,
+            (top + bottom) // 2,
+        )
+
+        if (
+            SAVE_AS_MOUSE_CACHE.get("hwnd")
+            != main_hwnd
+        ):
+            SAVE_AS_MOUSE_CACHE.clear()
+
+        SAVE_AS_MOUSE_CACHE["hwnd"] = main_hwnd
+        SAVE_AS_MOUSE_CACHE["save_as_point"] = point
+
         mouse.click(
             button="left",
-            coords=(
-                (left + right) // 2,
-                (top + bottom) // 2,
-            ),
+            coords=point,
         )
     finally:
         add_optional_timing(
@@ -3404,6 +3470,7 @@ def open_save_as_dialog(
 
     if timings is not None:
         for key in (
+            "open_save_as_cached_mouse",
             "open_save_as_cached_win32_command",
             "open_save_as_scan_win32_menu",
             "open_save_as_send_wm_command",
@@ -3488,6 +3555,61 @@ def open_save_as_dialog(
 
     try:
         focus_window(main_hwnd)
+
+        mouse_started = start_optional_timing(
+            timings
+        )
+
+        try:
+            file_point = SAVE_AS_MOUSE_CACHE.get(
+                "file_point"
+            )
+            save_as_point = SAVE_AS_MOUSE_CACHE.get(
+                "save_as_point"
+            )
+
+            if (
+                SAVE_AS_MOUSE_CACHE.get("hwnd")
+                == main_hwnd
+                and isinstance(file_point, tuple)
+                and len(file_point) == 2
+                and isinstance(save_as_point, tuple)
+                and len(save_as_point) == 2
+            ):
+                try:
+                    mouse.click(
+                        button="left",
+                        coords=file_point,
+                    )
+                    time.sleep(0.25)
+                    mouse.click(
+                        button="left",
+                        coords=save_as_point,
+                    )
+
+                    dialog_hwnd = (
+                        wait_dialog_with_timing(
+                            "open_save_as_wait_dialog",
+                            min(
+                                1.0,
+                                dialog_timeout,
+                            ),
+                        )
+                    )
+                except Exception:
+                    dialog_hwnd = 0
+
+                if dialog_hwnd:
+                    return dialog_hwnd
+
+                SAVE_AS_MOUSE_CACHE.clear()
+        finally:
+            finish_optional_timing(
+                timings,
+                "open_save_as_cached_mouse",
+                mouse_started,
+            )
+
         cached_started = start_optional_timing(
             timings
         )

@@ -27,6 +27,11 @@ def reset_save_as_win32_state(
 ) -> None:
     monkeypatch.setattr(
         automation,
+        "SAVE_AS_MOUSE_CACHE",
+        {},
+    )
+    monkeypatch.setattr(
+        automation,
         "_SAVE_AS_WIN32_COMMAND_ID",
         None,
     )
