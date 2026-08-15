@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 
@@ -33,6 +35,9 @@ def load_json(path: Path) -> Any:
 
 
 def test_strict_pairs_dataset_matches_ranking() -> None:
+    if not RANKING_PATH.exists():
+        pytest.skip("strict-pair ranking source is not available on this machine")
+
     dataset = load_json(
         STRICT_PAIRS_PATH
     )
