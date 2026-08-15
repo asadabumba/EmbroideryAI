@@ -4224,6 +4224,43 @@ def set_save_as_path(
     deadline = time.time() + timeout
     errors: list[str] = []
     last_readings: dict[str, str] = {}
+
+    # Fast path: Win32 Edit 1001 without slow UIA discovery.
+    fast_wrapper, fast_hwnd = (
+        find_win32_save_as_edit(
+            dialog_hwnd
+        )
+    )
+
+    if fast_wrapper is not None and fast_hwnd:
+        try:
+            fast_wrapper.set_edit_text(
+                expected
+            )
+
+            accepted, last_readings = (
+                wait_for_save_as_field_value(
+                    None,
+                    fast_hwnd,
+                    output_path,
+                    min(
+                        deadline,
+                        time.time() + 0.20,
+                    ),
+                )
+            )
+
+            if accepted:
+                print(
+                    "Save As path set via Win32:",
+                    accepted,
+                )
+                return fast_hwnd
+        except Exception as error:
+            errors.append(
+                "Fast Win32 path: "
+                f"{error}"
+            )
     uia_edit = safe_uia_call(
         lambda: find_uia_save_as_edit(
             dialog_hwnd,
