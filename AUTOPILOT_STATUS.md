@@ -1,6 +1,6 @@
 ﻿# EmbroideryAI Autopilot Status
 
-Updated: 2026-08-16 10:44
+Updated: 2026-08-16 11:05
 
 Stage: full dataset generation
 
@@ -34,12 +34,12 @@ Previous sandbox blocker:
 stale; direct project automation now controls Wilcom
 
 Full dataset:
-Sources complete: 148 / 717
-Variants verified: 3,700 / 17,925
-Percent: 20.64%
+Sources complete: 158 / 717
+Variants verified: 3,950 / 17,925
+Percent: 22.04%
 
 Current source:
-next: raw/2.mishka v vanne.EMB
+next: raw/2Bant-bok.EMB
 
 Retries:
 8 source retry attempts; 3 task retries
@@ -51,10 +51,10 @@ Average seconds/variant:
 4.97
 
 Estimated remaining time:
-approximately 19.3 hours
+approximately 18.9 hours
 
 Current action:
-run and verify production chunk 16 (sources 151-160)
+run and verify production chunk 17 (sources 161-170)
 
 Latest code commit:
 6ef17ee Verify canonical production chunks independently
