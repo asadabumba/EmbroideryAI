@@ -3,8 +3,25 @@ import olefile
 import hashlib
 
 
-ORIGINAL = Path(r"C:\Users\SA88\EmbroideryAI\dataset\raw\2 мишки-страз.EMB")
-SHIFTED = Path(r"C:\Users\SA88\EmbroideryAI\dataset\raw\2 мишки-страз_x.EMB")
+BASE_DIR = Path(__file__).resolve().parents[1]
+
+ORIGINAL = (
+    BASE_DIR
+    / "dataset"
+    / "experiments"
+    / "e1"
+    / "base"
+    / "design.EMB"
+)
+
+SHIFTED = (
+    BASE_DIR
+    / "dataset"
+    / "experiments"
+    / "e1"
+    / "x14"
+    / "design.EMB"
+)
 
 
 def get_streams(path):
