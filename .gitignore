@@ -39,3 +39,15 @@ Thumbs.db
 
 # Archive
 archive/
+
+# runtime dumps
+*.bin
+
+# datasets
+dataset/
+
+# generated csv
+coordinates*.csv
+
+# temp
+\[-OtherParameters/
